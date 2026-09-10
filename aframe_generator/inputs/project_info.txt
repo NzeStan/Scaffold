@@ -2,8 +2,8 @@
 # Lines starting with # are ignored. Format: KEY: value
 
 # Document
-DOCUMENT_NO:         PMS-WA-ARCO-072
-SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-072
+DOCUMENT_NO:         PMS-WA-ARCO-085
+SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-085
 REVISION:            0
 
 # Integrated outputs
@@ -15,9 +15,9 @@ ENGINEERING_DRAWING_FORMAT:  standard
 SHOW_3D_ISOMETRIC_PAGE:      no
 
 # Scaffold location and type
-LOCATION:            Chiller-1
-AREA:                C
-SCAFFOLD_TYPE:       A Frame
+LOCATION:            Jetty-1
+AREA:                B
+SCAFFOLD_TYPE:       A-Frame
 RISK_LEVEL:          Medium
 # Cover page CATEGORY label: yes = "Category 1 Engineered Scaffold", no/blank = "Category 2 Engineered Scaffold".
 CATEGORY_1_ASSURANCE_NOTE: no
@@ -26,14 +26,12 @@ CATEGORY_1_ASSURANCE_NOTE: no
 # Set to "yes" to include the full tie-by-tie reaction table as a separate calc page.
 # Default is "no" (tie FX/FZ sums are still shown on the cover page).
 SHOW_TIE_REACTIONS: no
-# Cover page horizontal load display: "sum" (default) = net total; "worst" = Design Tie Force (worst single node).
-TIE_DISPLAY:         sum
 # Manual override for cover page tie forces (kN). Leave blank to use auto-calculated values.
-TIE_FORCE_FX:0.023
-TIE_FORCE_FZ:2.342
+TIE_FORCE_FX:
+TIE_FORCE_FZ:
 
 PERMIT_NO:
-ERMT_NO:             PIC/PMS/26/3196
+ERMT_NO:             PIC/PMS/26/3638
 
 # Optional cover-page callouts, shown once under Brief Description (after the tie display
 # if this project has ties). Leave blank to omit entirely.
@@ -46,7 +44,7 @@ DESIGNED_BY_NAME:    Nnamani, Ifeanyi
 VERIFIED_BY_ID:      PMS/612C
 VERIFIED_BY_NAME:    Olowo, Peter
 REVIEWED_BY_ID:      PIC/31C
-REVIEWED_BY_NAME:    Mustapha, Mahmud
+REVIEWED_BY_NAME:    Mustapha, Mahmud 
 APPROVED_BY_ID:      PIC/2
 APPROVED_BY_NAME:    Chima, Tasieobi
 CHECKED_BY_ID:       PMS/6
@@ -55,18 +53,24 @@ PREPARED_BY_NAME:
 
 
 # Job details
-EQUIPMENT_TAG:       
-WORK_ORDER:          
-PURPOSE:             spool lifting during the 1-K-3703 outage
+EQUIPMENT_TAG:       34MOV-772, 34MOV-773
+WORK_ORDER:          4021297, 4021298
+PURPOSE:             replacement and upgrade of obsolete actuator on MOV
 STRUCTURE_ABOVE_GROUND_M: 
 WIND_CALC_HEIGHT_M: 
 DOC_LIFE:            3 Years
 
-# Connection Stability
-# Max axial force read from STAAD member force / code check table.
-# Leave blank to auto-extract from .out file code check results.
-MAX_AXIAL_KN: 1.234
-MAX_AXIAL_MEMBER:51
+# Connection Stability Check — auto-computed from the STAAD output (member forces,
+# ULS first with an SLS fallback). Override only if that computation can't be trusted:
+MAX_AXIAL_KN:
+MAX_AXIAL_MEMBER:
+MAX_AXIAL_NODE:
+MAX_AXIAL_LC:
+# Separate override for the SLS fallback value (only used if the ULS check fails).
+MAX_AXIAL_SLS_KN:
+MAX_AXIAL_SLS_MEMBER:
+MAX_AXIAL_SLS_NODE:
+MAX_AXIAL_SLS_LC:
 
 # Deflection Check - from STAAD GUI SLS combination results
 #
@@ -79,10 +83,10 @@ MAX_AXIAL_MEMBER:51
 #                     Length used as L for L/200.
 #                     Leave blank -> L defaults to scaffold depth.
 #
-MAX_VERT_DISP_MM:0.745
-MAX_VERT_MEMBER:24
-MAX_VERT_DISP_LC:19
+MAX_VERT_DISP_MM:0.495
+MAX_VERT_MEMBER:157
+MAX_VERT_DISP_LC:16
 
-MAX_HORIZ_DISP_MM:0.732
-MAX_HORIZ_MEMBER:38
-MAX_HORIZ_DISP_LC:15
+MAX_HORIZ_DISP_MM:0.345
+MAX_HORIZ_MEMBER:59
+MAX_HORIZ_DISP_LC:16

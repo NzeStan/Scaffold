@@ -456,15 +456,19 @@ class StaadParser:
     def _parse_support_reactions(self, out, tie_nodes=None, load_cases=None, load_combinations=None, fixed_nodes=None):
         tie_nodes   = set(tie_nodes   or [])
         fixed_nodes = set(fixed_nodes or [])
+        _no_governing = {'ULS': None, 'SLS': None}
         if not tie_nodes and not fixed_nodes:
             return {
                 'tie_joints': [],
                 'net_global': {
-                    'definition': 'Net Global Reaction = Sum FX and Sum FZ at the relevant support nodes, preserving signs. Resultant H = sqrt((Sum FX)^2 + (Sum FZ)^2).',
+                    'definition': 'Total FX / FZ = signed sum of FX / FZ across all tie joints for a given load '
+                                  'combination. FX and FZ are each independently governed by whichever load '
+                                  'combination produces their own largest magnitude - not combined into a resultant.',
                     'rows': [],
-                    'governing': None,
+                    'governing_fx': dict(_no_governing),
+                    'governing_fz': dict(_no_governing),
                 },
-                'net_fy_at_fixed': {'rows': [], 'governing': None},
+                'net_fy_at_fixed': {'fixed_joints': [], 'rows': [], 'governing_fy': dict(_no_governing)},
             }
 
         titles = {}
@@ -486,7 +490,6 @@ class StaadParser:
         )
 
         by_load = {}
-        by_node = {}   # tracks peak resultant at each individual tie node
         by_load_fy = {}  # FY accumulation at fully-FIXED nodes
         current_joint = None
         in_reactions = False
@@ -498,7 +501,16 @@ class StaadParser:
                 continue
             if not in_reactions:
                 continue
-            if any(marker in upper for marker in ('MEMBER     TABLE', 'PARAMETER', 'FINISH')):
+            if any(marker in upper for marker in (
+                'MEMBER     TABLE', 'PARAMETER', 'FINISH', 'END OF LATEST ANALYSIS RESULT',
+            )):
+                # A duplicate "PRINT SUPPORT REACTION" (or any later PRINT command) can
+                # repeat this table, or - without this stop - the scan runs straight into
+                # the MEMBER FORCES table that follows, whose continuation rows (just
+                # <joint> <6 numbers>) accidentally match this same row pattern and get
+                # silently summed in as if they were more reactions for the last tracked
+                # joint. Stopping at the first "end of analysis" marker keeps this to
+                # exactly the one genuine reactions table.
                 break
             if not line.strip() or 'JOINT' in upper or '---' in line or 'STAAD SPACE' in upper:
                 continue
@@ -540,53 +552,16 @@ class StaadParser:
             item['rx_net'] += fx
             item['rz_net'] += fz
 
-            # --- per-node peak: records the worst single-node force across all LCs ---
-            resultant = math.hypot(fx, fz)
-            node_entry = by_node.setdefault(current_joint, {
-                'node': current_joint,
-                'max_fx': 0.0,
-                'max_fz': 0.0,
-                'max_resultant': 0.0,
-                'governing_lc': None,
-                'governing_title': None,
-            })
-            if resultant > node_entry['max_resultant']:
-                node_entry['max_resultant'] = resultant
-                node_entry['max_fx'] = round(fx, 3)
-                node_entry['max_fz'] = round(fz, 3)
-                node_entry['max_resultant'] = round(resultant, 3)
-                node_entry['governing_lc'] = load_no
-                node_entry['governing_title'] = titles.get(load_no, f'LC {load_no}')
-
         net_rows = []
         for load_no in sorted(by_load):
             item = by_load[load_no]
-            rx_net = round(item['rx_net'], 3)
-            rz_net = round(item['rz_net'], 3)
-            common = {
+            net_rows.append({
                 'load_case': item['load_case'],
                 'title': item['title'],
                 'tie_count': len(item['joint_count']),
-            }
-            net_rows.append({
-                **common,
-                'total_x': rx_net,
-                'total_z': rz_net,
-                'resultant_h': round(math.hypot(rx_net, rz_net), 3),
+                'total_x': round(item['rx_net'], 3),
+                'total_z': round(item['rz_net'], 3),
             })
-
-        governing_net = max(net_rows, key=lambda row: row['resultant_h'], default=None)
-
-        # Per-node peaks sorted by magnitude — worst node first
-        per_node_peaks = sorted(
-            [
-                {**v, 'max_resultant': round(v['max_resultant'], 3)}
-                for v in by_node.values()
-            ],
-            key=lambda n: n['max_resultant'],
-            reverse=True,
-        )
-        worst_individual_tie = per_node_peaks[0] if per_node_peaks else None
 
         fy_rows = [
             {
@@ -596,23 +571,54 @@ class StaadParser:
             }
             for item in sorted(by_load_fy.values(), key=lambda x: x['load_case'])
         ]
-        governing_fy = max(fy_rows, key=lambda r: abs(r['total_y']), default=None)
+
+        # FX, FZ and FY are each governed independently - the load combination
+        # that produces the largest |FX| need not be the same one that produces
+        # the largest |FZ|. The receiving tie fittings are checked directionally
+        # (not against a combined resultant), so no resultant is computed here.
+        # Every direction is also split by basis (ULS / SLS) since both are
+        # normally present and each governs its own design check.
+        combo_class = {c['number']: self._combo_basis(c) for c in (load_combinations or [])}
+
+        def _governing_by_basis(rows, key):
+            uls = [r for r in rows if combo_class.get(r['load_case']) == 'ULS']
+            sls = [r for r in rows if combo_class.get(r['load_case']) == 'SLS']
+            return {
+                'ULS': max(uls, key=lambda r: abs(r[key]), default=None),
+                'SLS': max(sls, key=lambda r: abs(r[key]), default=None),
+            }
 
         return {
             'tie_joints': sorted(tie_nodes),
             'net_global': {
-                'definition': 'Net Global Reaction = Sum FX and Sum FZ at the relevant support nodes, preserving signs. Resultant H = sqrt((Sum FX)^2 + (Sum FZ)^2).',
+                'definition': 'Total FX / FZ = signed sum of FX / FZ across all tie joints for a given load '
+                              'combination. FX and FZ are each independently governed by whichever load '
+                              'combination produces their own largest magnitude - not combined into a resultant.',
                 'rows': net_rows,
-                'governing': governing_net,
+                'governing_fx': _governing_by_basis(net_rows, 'total_x'),
+                'governing_fz': _governing_by_basis(net_rows, 'total_z'),
             },
-            'per_node_peaks': per_node_peaks,
-            'worst_individual_tie': worst_individual_tie,
             'net_fy_at_fixed': {
                 'fixed_joints': sorted(fixed_nodes),
                 'rows': fy_rows,
-                'governing': governing_fy,
+                'governing_fy': _governing_by_basis(fy_rows, 'total_y'),
             },
         }
+
+    @staticmethod
+    def _combo_basis(combo):
+        """ULS if the combo title says so, else SLS; falls back to inspecting the
+        load factors (ULS combos are 1.5x, SLS combos 1.0x) for projects whose
+        combo titles don't carry an explicit ULS/SLS prefix."""
+        title = str(combo.get('title', '')).strip().upper()
+        if title.startswith('ULS'):
+            return 'ULS'
+        if title.startswith('SLS'):
+            return 'SLS'
+        factors = combo.get('factors', [])
+        if factors and all(abs(abs(f) - 1.0) < 0.01 for _, f in factors):
+            return 'SLS'
+        return 'ULS'
 
     def _parse_base_support_reactions(self, out, base_nodes=None, load_cases=None, load_combinations=None):
         """Return vertical base reactions by load case for counterweight checks."""
@@ -647,7 +653,16 @@ class StaadParser:
                 continue
             if not in_reactions:
                 continue
-            if any(marker in upper for marker in ('MEMBER     TABLE', 'PARAMETER', 'FINISH')):
+            if any(marker in upper for marker in (
+                'MEMBER     TABLE', 'PARAMETER', 'FINISH', 'END OF LATEST ANALYSIS RESULT',
+            )):
+                # A duplicate "PRINT SUPPORT REACTION" (or any later PRINT command) can
+                # repeat this table, or - without this stop - the scan runs straight into
+                # the MEMBER FORCES table that follows, whose continuation rows (just
+                # <joint> <6 numbers>) accidentally match this same row pattern and get
+                # silently summed in as if they were more reactions for the last tracked
+                # joint. Stopping at the first "end of analysis" marker keeps this to
+                # exactly the one genuine reactions table.
                 break
             if not line.strip() or 'JOINT' in upper or '---' in line or 'STAAD SPACE' in upper:
                 continue
@@ -777,8 +792,8 @@ class StaadParser:
                       <load> <jt> <axial> ...   (same member, new load, joint 1)
                              <jt> <axial> ...   (same member, same load, joint 2)
 
-        Returns {member_id: {load_case: axial_kn}}, keeping the larger-magnitude axial
-        of the member's two end joints (STAAD prints an equal-and-opposite pair).
+        Returns {member_id: {load_case: (axial_kn, joint)}}, keeping the larger-magnitude
+        axial of the member's two end joints (STAAD prints an equal-and-opposite pair).
         """
         result = {}
         m = re.search(
@@ -810,6 +825,7 @@ class StaadParser:
             except ValueError:
                 continue
 
+            joint = int(toks[n_int - 1])
             if n_int == 3:
                 member, load = int(toks[0]), int(toks[1])
             elif n_int == 2:
@@ -819,8 +835,8 @@ class StaadParser:
 
             per_load = result.setdefault(member, {})
             prev = per_load.get(load)
-            if prev is None or abs(axial) > abs(prev):
-                per_load[load] = axial
+            if prev is None or abs(axial) > abs(prev[0]):
+                per_load[load] = (axial, joint)
 
         return result
 

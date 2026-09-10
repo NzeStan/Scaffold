@@ -219,7 +219,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   </table>
 
   <div class="notice" style="margin-top:10px;">
-    {% if show_assurance_note %}SCAFFOLD TO BE INSPECTED BY TES BEFORE TAGGING{% else %}SCAFFOLD TO BE INSPECTED &amp; TAGGED BEFORE USE{% endif %}
+    {% if show_assurance_note %}SCAFFOLD TO BE INSPECTED BY PIC BEFORE TAGGING{% else %}SCAFFOLD TO BE INSPECTED &amp; TAGGED BEFORE USE{% endif %}
   </div>
 
   {# Brief description + site photo side by side #}
@@ -243,32 +243,8 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     {% endif %}
   </div>
 
-  {% if has_ties or is_hanging %}
-  {% if tie_display_mode == 'worst' and worst_tie %}
-  {# ── Design Tie Force: worst single node ── #}
-  <div style="margin-top:6px; padding:5px 12px 6px; background:var(--bg-hdr); border-left:4px solid var(--gold);">
-    <div style="font-size:7.5pt; font-weight:bold; color:var(--navy-mid); text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Design Tie Force &mdash; Worst Single Node <span class="src-tag" style="text-transform:none; letter-spacing:normal;">(Extracted from the STAAD output file)</span></div>
-    <table style="border-collapse:collapse; font-size:8.5pt; width:auto;">
-      <thead>
-        <tr style="background:var(--navy-dark); color:#fff;">
-          <th style="padding:3px 10px; text-align:center; font-weight:600; border:1px solid var(--navy-dark);">Node</th>
-          <th style="padding:3px 10px; text-align:center; font-weight:600; border:1px solid var(--navy-dark);">F<sub>X</sub> (kN)</th>
-          <th style="padding:3px 10px; text-align:center; font-weight:600; border:1px solid var(--navy-dark);">F<sub>Z</sub> (kN)</th>
-          <th style="padding:3px 10px; text-align:center; font-weight:600; border:1px solid var(--navy-dark);">Resultant H (kN)</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr style="background:#fff;">
-          <td style="padding:3px 10px; text-align:center; border:1px solid var(--border); font-weight:bold;">{{ worst_tie.node }}</td>
-          <td style="padding:3px 10px; text-align:center; border:1px solid var(--border); font-weight:bold;">{{ worst_tie.max_fx }}</td>
-          <td style="padding:3px 10px; text-align:center; border:1px solid var(--border); font-weight:bold;">{{ worst_tie.max_fz }}</td>
-          <td style="padding:3px 10px; text-align:center; border:1px solid var(--border); font-weight:bold; color:var(--navy);">{{ worst_tie.max_resultant }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-  {% elif tie_sum_fx is not none or tie_sum_fz is not none %}
-  {# ── Total horizontal load sum (default) ── #}
+  {% if (has_ties or is_hanging) and (tie_sum_fx is not none or tie_sum_fz is not none) %}
+  {# ── Total horizontal (and, where applicable, vertical) tie load — ULS-governing value per direction ── #}
   <div style="margin-top:6px; padding:5px 12px 6px; background:var(--bg-hdr); border-left:4px solid var(--gold);">
     {% if tie_sum_fx is not none %}
     <div style="font-size:10pt; font-weight:bold; color:var(--navy);">
@@ -286,7 +262,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </div>
     {% endif %}
   </div>
-  {% endif %}
   {% endif %}
 
   {% if project.NOTE %}
@@ -357,46 +332,53 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 <div class="section-hdr">REACTION ON PARENT STRUCTURE (TIES) <span class="src-tag" style="font-size:8pt;">(Extracted from the STAAD output file)</span></div>
 
 <div class="callout" style="font-size:8.4pt;">
-  The maximum horizontal force at each tie node is reported from the governing ULS load combination.
-  These forces represent the demand transferred to the parent structure at each tie point and govern
-  the design of tie brackets, clamps, and anchors.
-  Tie nodes: {{ structural.support_reactions.tie_joints | join(', ') }}.
+  Tie joints: {{ structural.support_reactions.tie_joints | join(', ') }}.
 </div>
+{% set gfx = structural.support_reactions.net_global.governing_fx %}
+{% set gfz = structural.support_reactions.net_global.governing_fz %}
+{% set gfy = structural.support_reactions.net_fy_at_fixed.governing_fy %}
 <table style="font-size:8.5pt; margin-bottom:4px;">
   <thead>
     <tr>
-      <th style="width:12%;">Tie Node</th>
+      <th style="width:12%;">Direction</th>
+      <th style="width:12%;">Basis</th>
       <th style="width:14%;">Governing LC</th>
-      <th>Load Description</th>
-      <th style="width:16%;">FX at Node (kN)</th>
-      <th style="width:16%;">FZ at Node (kN)</th>
-      <th style="width:16%; background:var(--gold); color:var(--navy);">Resultant H (kN)</th>
+      <th>Load Combination</th>
+      <th style="width:18%; background:var(--gold); color:var(--navy);">Total Load (kN)</th>
     </tr>
   </thead>
   <tbody>
-    {% for node in structural.support_reactions.per_node_peaks %}
+    {% for label, basis, row in [
+      ('Total FX', 'ULS', gfx.ULS), ('Total FX', 'SLS', gfx.SLS),
+      ('Total FZ', 'ULS', gfz.ULS), ('Total FZ', 'SLS', gfz.SLS),
+    ] %}
+    {% if row %}
     <tr>
-      <td style="text-align:center; font-weight:bold;">{{ node.node }}</td>
-      <td style="text-align:center;">LC {{ node.governing_lc }}</td>
-      <td>{{ node.governing_title }}</td>
-      <td style="text-align:center;">{{ node.max_fx }}</td>
-      <td style="text-align:center;">{{ node.max_fz }}</td>
-      <td style="text-align:center; font-weight:bold;">{{ node.max_resultant }}</td>
+      <td style="text-align:center; font-weight:bold;">{{ label }}</td>
+      <td style="text-align:center;">{{ basis }}</td>
+      <td style="text-align:center;">LC {{ row.load_case }}</td>
+      <td>{{ row.title }}</td>
+      <td style="text-align:center; font-weight:bold;">{{ row.total_x if label == 'Total FX' else row.total_z }}</td>
     </tr>
-    {% else %}
-    <tr><td colspan="6" style="text-align:center; color:var(--muted);">No tie support reactions found in STAAD output.</td></tr>
+    {% endif %}
     {% endfor %}
-  </tbody>
-  {% if structural.support_reactions.worst_individual_tie %}
-  <tfoot>
+    {% if is_hanging or has_fixed_supports %}
+    {% for basis, row in [('ULS', gfy.ULS), ('SLS', gfy.SLS)] %}
+    {% if row %}
     <tr>
-      <td colspan="3" style="text-align:right; font-weight:bold; background:var(--bg-hdr);">Design Tie Force (worst single node):</td>
-      <td style="text-align:center; font-weight:bold; background:var(--bg-hdr);">{{ structural.support_reactions.worst_individual_tie.max_fx }} kN</td>
-      <td style="text-align:center; font-weight:bold; background:var(--bg-hdr);">{{ structural.support_reactions.worst_individual_tie.max_fz }} kN</td>
-      <td style="text-align:center; font-weight:bold; background:var(--gold); color:var(--navy);">{{ structural.support_reactions.worst_individual_tie.max_resultant }} kN</td>
+      <td style="text-align:center; font-weight:bold;">Total FY</td>
+      <td style="text-align:center;">{{ basis }}</td>
+      <td style="text-align:center;">LC {{ row.load_case }}</td>
+      <td>{{ row.title }}</td>
+      <td style="text-align:center; font-weight:bold;">{{ row.total_y }}</td>
     </tr>
-  </tfoot>
-  {% endif %}
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+    {% if not (gfx.ULS or gfx.SLS or gfz.ULS or gfz.SLS) %}
+    <tr><td colspan="5" style="text-align:center; color:var(--muted);">No tie support reactions found in STAAD output.</td></tr>
+    {% endif %}
+  </tbody>
 </table>
 </div>
 {% endif %}
@@ -895,7 +877,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     <td style="border:none; line-height:1.7;">
       The maximum axial load on scaffold tube members is
       <strong>{{ "%.3f"|format(max_axial) }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span>
-      {% if max_axial_member %}(Member {{ max_axial_member }}, {{ max_axial_type }}){% endif %}
+      {% if max_axial_member %}(Member {{ max_axial_member }}{% if top_axial_members and top_axial_members[0].node %}, Node {{ top_axial_members[0].node }}{% endif %}){% endif %}
       {% if connection_basis == 'SLS' %}under SLS (unfactored, &gamma;=1.0) — the ULS (&gamma;=1.5) axial load
       exceeded Class B capacity, so the check falls back to the SLS basis{% else %}under ULS (&gamma;=1.5){% endif %}.
       The required right-angle coupler class is selected from Table C.1 below using the slipping resistance
@@ -937,12 +919,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 
 {% if top_axial_members %}
 <div class="sub-hdr" style="margin-top:8px;">Member Axial Force Summary (Top {{ [top_axial_members|length, 30]|min }} Horizontal Members — {{ connection_basis }} Code Check) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
-{% if axial_source == 'member_forces' %}
 <table style="font-size:8pt; margin-bottom:6px;">
   <thead>
     <tr>
       <th style="width:22%;">Member</th>
-      <th style="width:22%;">Type</th>
+      <th style="width:22%;">Node</th>
       <th style="width:22%;">L/C</th>
       <th style="width:34%; background:var(--gold); color:var(--navy);">Axial Force (kN)</th>
     </tr>
@@ -951,59 +932,21 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     {% for m in top_axial_members %}
     <tr>
       <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
-      <td style="text-align:center;">{{ m.type or 'C' }}</td>
+      <td style="text-align:center;">{{ m.node or '' }}</td>
       <td style="text-align:center;">{{ m.lc }}</td>
       <td style="text-align:center; font-weight:bold; {% if m.axial == max_axial %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.axial) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-{% elif connection_basis == 'SLS' %}
-<table style="font-size:8pt; margin-bottom:6px;">
-  <thead>
-    <tr>
-      <th style="width:30%;">Member</th>
-      <th style="width:30%;">Type</th>
-      <th style="width:40%; background:var(--gold); color:var(--navy);">Axial Force (kN)</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for m in top_axial_members %}
-    <tr>
-      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
-      <td style="text-align:center;">{{ m.type or 'C' }}</td>
-      <td style="text-align:center; font-weight:bold; {% if m.axial == max_axial %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.axial) }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<table style="font-size:8pt; margin-bottom:6px;">
-  <thead>
-    <tr>
-      <th style="width:12%;">Member</th>
-      <th style="width:12%;">Type</th>
-      <th style="width:14%;">Status</th>
-      <th style="width:14%;">Clause</th>
-      <th style="width:14%;">UC Ratio</th>
-      <th style="width:10%;">L/C</th>
-      <th style="width:24%; background:var(--gold); color:var(--navy);">Axial Force (kN)</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for m in top_axial_members %}
-    <tr>
-      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
-      <td style="text-align:center;">{{ m.type or 'C' }}</td>
-      <td style="text-align:center;">{% if m.status=='PASS' %}<span class="badge-pass">PASS</span>{% else %}<span class="badge-fail">FAIL</span>{% endif %}</td>
-      <td style="text-align:center; font-size:7.5pt;">{{ m.clause }}</td>
-      <td style="text-align:center; {% if m.ratio>0.8 %}color:#dc3545;font-weight:bold;{% elif m.ratio>0.6 %}color:var(--gold);{% endif %}">{{ "%.3f"|format(m.ratio) }}</td>
-      <td style="text-align:center;">{{ m.lc }}</td>
-      <td style="text-align:center; font-weight:bold; {% if m.axial == max_axial %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.axial) }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if images['connection_table'] %}
+<div style="margin-top:6px; break-inside:avoid; page-break-inside:avoid;">
+  <div class="sub-hdr" style="font-size:8.5pt;">Axial Force / Code Check Table ({{ connection_basis }} Combinations) <span class="src-tag">(Extracted from the STAAD output file)</span></div>
+  <img src="{{ images['connection_table'] }}" class="app-img" style="width:100%; max-height:250px;"/>
+  <div class="callout" style="margin-top:4px; font-size:8.5pt;">
+    Max = <strong>{{ "%.3f"|format(max_axial) }} kN</strong> (Member {{ max_axial_member }}, LC {{ top_axial_members[0].lc if top_axial_members else '' }})
+  </div>
+</div>
 {% endif %}
 {% endif %}
 

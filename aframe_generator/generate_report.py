@@ -128,7 +128,6 @@ DEFAULTS = {
     'SHOW_3D_ISOMETRIC_PAGE': 'yes',
     # Page 2 — Reaction on Parent Structure (Ties), only relevant if the A-frame is tied.
     'SHOW_TIE_REACTIONS': 'no',
-    'TIE_DISPLAY': 'sum',
     'TIE_FORCE_FX': '',
     'TIE_FORCE_FZ': '',
 }
@@ -974,27 +973,22 @@ def main():
             ('VERIFIED BY', project.get('VERIFIED_BY_ID'), project.get('VERIFIED_BY_NAME')),
             ('CHECKED BY',  project.get('CHECKED_BY_ID'),  project.get('CHECKED_BY_NAME')),
             ('REVIEWED BY', project.get('REVIEWED_BY_ID'), project.get('REVIEWED_BY_NAME')),
-            ('REVIEWED & APPROVED BY', project.get('APPROVED_BY_ID'), project.get('APPROVED_BY_NAME')),
+            ('APPROVED BY', project.get('APPROVED_BY_ID'), project.get('APPROVED_BY_NAME')),
         )
         if str(name or '').strip()
     ]
     has_any_signatory_id = any(str(pid or '').strip() for _, pid, _ in signatory_rows)
 
+    # Cover page tie force one-liners: the ULS-governing value for each direction
+    # (ULS is the design-driving basis for tie bracket/clamp/anchor capacity).
+    # FX and FZ are each independently governed — see net_global.governing_fx/fz.
     sr = structural.get('support_reactions', {})
-    worst_tie     = sr.get('worst_individual_tie')
-    net_governing = sr.get('net_global', {}).get('governing')
-    tie_display_mode = (project.get('TIE_DISPLAY') or 'sum').strip().lower()
-    if tie_display_mode not in ('sum', 'worst'):
-        tie_display_mode = 'sum'
-    if tie_display_mode == 'worst' and worst_tie:
-        tie_sum_fx = worst_tie['max_fx']
-        tie_sum_fz = worst_tie['max_fz']
-    elif net_governing:
-        tie_sum_fx = net_governing['total_x']
-        tie_sum_fz = net_governing['total_z']
-    else:
-        tie_sum_fx = worst_tie['max_fx'] if worst_tie else None
-        tie_sum_fz = worst_tie['max_fz'] if worst_tie else None
+    governing_fx = sr.get('net_global', {}).get('governing_fx', {})
+    governing_fz = sr.get('net_global', {}).get('governing_fz', {})
+    gov_fx_uls = governing_fx.get('ULS')
+    gov_fz_uls = governing_fz.get('ULS')
+    tie_sum_fx = gov_fx_uls['total_x'] if gov_fx_uls else None
+    tie_sum_fz = gov_fz_uls['total_z'] if gov_fz_uls else None
 
     # STAAD-output source tags: TIE_FORCE_FX/FZ are a manual design override (per the
     # project_info.txt comment), so once set the cover-page value no longer represents a
@@ -1008,7 +1002,6 @@ def main():
         tie_sum_fz = _optional_float(project.get('TIE_FORCE_FZ'))
 
     # -- Connection stability: max axial in HORIZONTAL members only (coupler slipping) --
-    cc = structural['code_check']
     nodes_coord = structural.get('geometry', {}).get('nodes', {})
 
     def _is_horizontal(member_id):
@@ -1023,12 +1016,11 @@ def main():
         dx, dz = abs(n2[0] - n1[0]), abs(n2[2] - n1[2])
         return (dx * dx + dz * dz) > dy * dy
 
-    # Prefer the real per-member, per-load-case axial force (from a STAAD 'PRINT MEMBER
-    # FORCES' table) over the STAAD steel code-check block: the code-check axial is tied
-    # to whichever load case governs that member's bending/combined-stress UC ratio, not
-    # necessarily the load case with the largest raw axial force - which is what actually
-    # matters for a coupler slipping check. Falls back to the code-check block's axial for
-    # projects that don't have a member-forces table.
+    # Real per-member, per-load-case axial force, from a STAAD 'PRINT MEMBER FORCES'
+    # table (not the steel code-check block: the code-check axial is tied to whichever
+    # load case governs that member's bending/combined-stress UC ratio, not necessarily
+    # the load case with the largest raw axial force - which is what actually matters
+    # for a coupler slipping check).
     member_forces = structural.get('member_forces') or {}
     combos = structural.get('load_combinations', [])
 
@@ -1050,45 +1042,39 @@ def main():
     sls_lc_numbers = {c['number'] for c in combos if _combo_basis(c) == 'SLS'}
 
     def _peak_axial(per_load, lc_numbers):
-        """(abs_axial, signed_axial, load_case) of the largest-magnitude axial among
-        the given load cases, or None if none apply."""
-        candidates = [(abs(v), v, lc) for lc, v in per_load.items() if lc in lc_numbers]
+        """(abs_axial, signed_axial, node, load_case) of the largest-magnitude axial
+        among the given load cases, or None if none apply."""
+        candidates = [(abs(v[0]), v[0], v[1], lc) for lc, v in per_load.items() if lc in lc_numbers]
         return max(candidates, key=lambda t: t[0]) if candidates else None
 
-    axial_source = 'member_forces' if member_forces and uls_lc_numbers else 'code_check'
+    axial_source = 'member_forces'
+    uls_rows = []
+    for mid, per_load in member_forces.items():
+        if not _is_horizontal(mid):
+            continue
+        peak = _peak_axial(per_load, uls_lc_numbers)
+        if peak is None:
+            continue
+        abs_v, signed_v, node, lc = peak
+        uls_rows.append({'member': mid, 'axial': round(abs_v, 3), 'node': node, 'lc': lc})
+    uls_rows.sort(key=lambda r: r['axial'], reverse=True)
 
-    if axial_source == 'member_forces':
-        uls_rows = []
-        for mid, per_load in member_forces.items():
-            if not _is_horizontal(mid):
-                continue
-            peak = _peak_axial(per_load, uls_lc_numbers)
-            if peak is None:
-                continue
-            abs_v, signed_v, lc = peak
-            uls_rows.append({'member': mid, 'axial': round(abs_v, 3), 'type': 'C' if signed_v < 0 else 'T', 'lc': lc})
-        uls_rows.sort(key=lambda r: r['axial'], reverse=True)
+    best = uls_rows[0]
+    auto_axial, auto_axial_member = best['axial'], best['member']
+    top_axial_members = uls_rows[:30]
 
-        if uls_rows:
-            best = uls_rows[0]
-            auto_axial, auto_axial_member, auto_axial_type = best['axial'], best['member'], best['type']
-            top_axial_members = uls_rows[:30]
-        else:
-            axial_source = 'code_check'  # no horizontal members had member-forces data
-
-    if axial_source == 'code_check':
-        horiz_members = [m for m in cc.get('members', []) if _is_horizontal(m['member'])]
-        if horiz_members:
-            best_horiz = max(horiz_members, key=lambda m: m['axial'])
-            auto_axial        = best_horiz['axial']
-            auto_axial_member = best_horiz['member']
-            auto_axial_type   = best_horiz.get('type', 'C')
-        else:
-            auto_axial        = cc['max_axial']
-            auto_axial_member = cc['max_axial_member']
-            auto_axial_type   = cc['max_axial_type']
-        top_axial_members = sorted(horiz_members if horiz_members else cc.get('members', []),
-                                   key=lambda m: m['axial'], reverse=True)[:30]
+    # Manual override (mirrors the deflection-check pattern): auto-computed above from
+    # the STAAD output; override only if that computation can't be trusted for a project.
+    override_axial = _optional_float(project.get('MAX_AXIAL_KN'))
+    if override_axial is not None:
+        auto_axial        = override_axial
+        override_member   = _optional_float(project.get('MAX_AXIAL_MEMBER'))
+        auto_axial_member = int(override_member) if override_member is not None else auto_axial_member
+        axial_source      = 'manual'
+        top_axial_members = [{
+            'member': auto_axial_member, 'node': project.get('MAX_AXIAL_NODE') or '',
+            'axial': round(override_axial, 3), 'lc': project.get('MAX_AXIAL_LC') or '',
+        }]
 
     # Check ULS first; if the coupler class fails under ULS, fall back to SLS (unfactored,
     # gamma=1.0 — see Load Combinations legend). The Status/Clause/UC Ratio columns are
@@ -1096,33 +1082,44 @@ def main():
     connection_basis = 'ULS'
     max_axial        = auto_axial
     max_axial_member = str(auto_axial_member or '')
-    max_axial_type   = auto_axial_type
     connection_class = _connection_class(max_axial)
 
+    override_sls_axial = _optional_float(project.get('MAX_AXIAL_SLS_KN'))
     if connection_class['status'] == 'FAIL':
         connection_basis = 'SLS'
-        if axial_source == 'member_forces':
+        if override_sls_axial is not None:
+            override_sls_member = _optional_float(project.get('MAX_AXIAL_SLS_MEMBER'))
+            max_axial        = round(override_sls_axial, 3)
+            max_axial_member = str(int(override_sls_member) if override_sls_member is not None else (auto_axial_member or ''))
+            sls_lc           = project.get('MAX_AXIAL_SLS_LC') or (top_axial_members[0]['lc'] if top_axial_members else '')
+            sls_node         = project.get('MAX_AXIAL_SLS_NODE') or (top_axial_members[0].get('node', '') if top_axial_members else '')
+            axial_source     = 'manual'
+            top_axial_members = [{
+                'member': max_axial_member, 'node': sls_node,
+                'axial': max_axial, 'lc': sls_lc,
+            }]
+        elif axial_source == 'member_forces':
             # Look up the SAME governing member's real SLS-combo axial directly - exact,
             # no unfactoring needed.
             peak = _peak_axial(member_forces.get(auto_axial_member, {}), sls_lc_numbers)
             if peak is not None:
-                abs_v, signed_v, lc = peak
-                max_axial, max_axial_type = round(abs_v, 3), 'C' if signed_v < 0 else 'T'
+                abs_v, signed_v, node, lc = peak
+                max_axial = round(abs_v, 3)
 
             sls_rows = []
             for row in top_axial_members:
                 peak = _peak_axial(member_forces.get(row['member'], {}), sls_lc_numbers)
                 if peak is not None:
-                    abs_v, signed_v, lc = peak
+                    abs_v, signed_v, node, lc = peak
                     sls_rows.append({'member': row['member'], 'axial': round(abs_v, 3),
-                                      'type': 'C' if signed_v < 0 else 'T', 'lc': lc})
+                                      'node': node, 'lc': lc})
                 else:
                     sls_rows.append({**row, 'axial': round(row['axial'] / 1.5, 3)})
             sls_rows.sort(key=lambda r: r['axial'], reverse=True)
             top_axial_members = sls_rows
         else:
-            # Legacy path (no member-forces table): SLS force = ULS force / 1.5, since
-            # every ULS combo here is the same SLS combo at 1.5x - an exact unfactoring.
+            # Manual-override fallback (no MAX_AXIAL_SLS_KN given): approximate SLS force
+            # as ULS force / 1.5, since every ULS combo here is the same SLS combo at 1.5x.
             max_axial = round(auto_axial / 1.5, 3)
             top_axial_members = [
                 {**m, 'axial': round(m['axial'] / 1.5, 3)}
@@ -1176,14 +1173,10 @@ def main():
         tie_sum_fz        = tie_sum_fz,
         tie_fx_from_out   = tie_fx_from_out,
         tie_fz_from_out   = tie_fz_from_out,
-        tie_display_mode  = tie_display_mode,
-        worst_tie         = worst_tie,
-        net_governing     = net_governing,
         install_notes = install_notes,
         date_gen      = date_gen,
         max_axial        = max_axial,
         max_axial_member = max_axial_member,
-        max_axial_type   = max_axial_type,
         connection_class  = connection_class,
         connection_basis  = connection_basis,
         axial_source      = axial_source,
