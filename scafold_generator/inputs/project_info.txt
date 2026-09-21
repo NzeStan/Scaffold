@@ -14,15 +14,6 @@ ENGINEERING_DRAWING_FORMAT:  standard
 # Show the large 3D Isometric View as the last page of the PDF (default: yes)
 SHOW_3D_ISOMETRIC_PAGE:      no
 
-# Counterweight (for no-tie cantilever stability checks)
-# Counterweight demand is calculated by ULS cantilever analysis-line moment balance about the
-# pivot line, then multiplied by COUNTERWEIGHT_SAFETY_FACTOR. Apply the resolved value directly
-# as Dead Load (DL) UDL member loads on the zone and rerun STAAD for final verification.
-COUNTERWEIGHT_ENABLED: no
-COUNTERWEIGHT_ZONE_NODES: 41,53,54,46
-COUNTERWEIGHT_PIVOT_NODES:   23,38,24
-COUNTERWEIGHT_SAFETY_FACTOR: 4
-
 # Scaffold location and type
 LOCATION:            Train 1,2,3 (Cryogenic) 
 AREA:                D

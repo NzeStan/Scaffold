@@ -894,13 +894,11 @@ def main():
     company_logo = load_logo('company')
     site_photo = load_image('site_photo')   # no placeholder if missing - intentional
     images = {k: load_image(k) for k in [
-        '3d_model', 'plan_view', 'elev_x', 'elev_z',
+        '3d_model',
         'load_chain_hoist', 'load_impact_x', 'load_impact_z',
         'load_wind_x', 'load_wind_z',
         'connection_table',
-        'deflection_vertical', 'deflection_vertical_table',
-        'deflection_horizontal', 'deflection_horizontal_table',
-        'uc_diagram',
+        'deflection_vertical_table', 'deflection_horizontal_table',
     ]}
     loaded = sum(1 for v in images.values() if v)
     print(f"  Images    : {loaded}/{len(images)} found")

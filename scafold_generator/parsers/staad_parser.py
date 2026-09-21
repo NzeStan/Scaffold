@@ -25,12 +25,6 @@ class StaadParser:
         combos        = self._parse_load_combinations(std)
         members       = self._parse_member_incidences(std, geom['nodes'])
         support_reactions = self._parse_support_reactions(out, supports.get('tie_nodes', []), load_cases, combos, supports.get('fixed_nodes', []))
-        base_support_reactions = self._parse_base_support_reactions(
-            out,
-            supports.get('base_nodes', []),
-            load_cases,
-            combos,
-        )
 
         # Wind: identify wind load case numbers from .std, then look them up in .out
         wind_lcs = self._extract_wind_load_cases(std)
@@ -70,7 +64,6 @@ class StaadParser:
             'displacements':         displ,
             'load_combinations':     combos,
             'support_reactions':      support_reactions,
-            'base_support_reactions': base_support_reactions,
             'frictional_resistance': fric,
             'swl_kn':                round(swl_candidate, 3),
             'swl_kg':                round(swl_candidate * 1000 / 9.81, 0) if swl_candidate else 0,
@@ -249,8 +242,6 @@ class StaadParser:
         lt = (load_type or '').upper()
         tt = (title or '').upper()
 
-        if re.search(r'\bCW\b|COUNTER\s*WEIGHT|COUNTERWEIGHT', tt):
-            return 'counterweight'
         if 'DEAD' in lt or re.search(r'\bDL\b|DEAD', tt):
             return 'dead'
         if re.search(r'\bHLX\b|HAND\s*RAIL.*\bX\b|HANDRAIL.*\bX\b', tt):
@@ -619,79 +610,6 @@ class StaadParser:
         if factors and all(abs(abs(f) - 1.0) < 0.01 for _, f in factors):
             return 'SLS'
         return 'ULS'
-
-    def _parse_base_support_reactions(self, out, base_nodes=None, load_cases=None, load_combinations=None):
-        """Return vertical base reactions by load case for counterweight checks."""
-        base_nodes = set(base_nodes or [])
-        if not base_nodes:
-            return {'base_joints': [], 'rows': []}
-
-        titles = {}
-        for case in load_cases or []:
-            titles[case['number']] = case.get('title') or case.get('load_type') or f"LC {case['number']}"
-        for combo in load_combinations or []:
-            titles[combo['number']] = combo.get('title') or f"LC {combo['number']}"
-
-        row_re = re.compile(
-            r'^\s*(?:(\d+)\s+)?(\d+)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+'
-            r'([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s*$'
-        )
-
-        by_load = {}
-        current_joint = None
-        in_reactions = False
-        for raw in out.splitlines():
-            line = raw.replace('\x05', '').strip('\r')
-            upper = line.upper()
-            if 'SUPPORT REACTIONS' in upper:
-                in_reactions = True
-                continue
-            if not in_reactions:
-                continue
-            if any(marker in upper for marker in (
-                'MEMBER     TABLE', 'PARAMETER', 'FINISH', 'END OF LATEST ANALYSIS RESULT',
-            )):
-                # A duplicate "PRINT SUPPORT REACTION" (or any later PRINT command) can
-                # repeat this table, or - without this stop - the scan runs straight into
-                # the MEMBER FORCES table that follows, whose continuation rows (just
-                # <joint> <6 numbers>) accidentally match this same row pattern and get
-                # silently summed in as if they were more reactions for the last tracked
-                # joint. Stopping at the first "end of analysis" marker keeps this to
-                # exactly the one genuine reactions table.
-                break
-            if not line.strip() or 'JOINT' in upper or '---' in line or 'STAAD SPACE' in upper:
-                continue
-
-            match = row_re.match(line)
-            if not match:
-                continue
-            if match.group(1):
-                current_joint = int(match.group(1))
-            if current_joint not in base_nodes:
-                continue
-
-            load_no = int(match.group(2))
-            by_load.setdefault(load_no, {})[current_joint] = float(match.group(4))
-
-        return {
-            'base_joints': sorted(base_nodes),
-            'rows': [
-                {
-                    'load_case': load_no,
-                    'title': titles.get(load_no, f'LC {load_no}'),
-                    'reactions': [
-                        {'node': node, 'fy': round(fy, 4)}
-                        for node, fy in sorted(reactions.items())
-                    ],
-                }
-                for load_no, reactions in sorted(by_load.items())
-            ],
-        }
 
     # wind load case identification
 

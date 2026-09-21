@@ -412,11 +412,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   </div>
   {% endif %}
   {% endfor %}
-  {% if counterweight.enabled %}
-  <div class="toc-entry">
-    <a href="#counterweight-check">Counterweight Stability Check</a>
-  </div>
-  {% endif %}
   <div class="toc-entry">
     <a href="#references-standards">References &amp; Standards</a>
   </div>
@@ -672,13 +667,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Wind Load Z (WLZ)</div>
   </div>
   {% endif %}
-  {% if counterweight.enabled %}
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_counterweight'] %}<img src="{{ images['load_counterweight'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Counterweight</strong><small>load_counterweight.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Counterweight Load (CW)</div>
-  </div>
-  {% endif %}
 </div>
 </div>
 
@@ -764,58 +752,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   </tbody>
 </table>
 </div>
-
-
-{# ==========================================================
-   SHEET 5 - COUNTERWEIGHT STABILITY CHECK  (only if enabled)
-   ========================================================== #}
-{% if counterweight.enabled %}
-<div class="page-calc" id="counterweight-check">
-<div class="section-hdr">COUNTERWEIGHT STABILITY CHECK</div>
-
-{% if counterweight.valid and not counterweight.errors and counterweight.has_demand %}
-<div class="sub-hdr">Counterweight Load Calculation</div>
-<p style="font-size:8.5pt; line-height:1.6; margin:2px 0 4px;">
-  Stability of the cantilever depends on the counterweight's restoring effect balancing the overturning
-  effect of the applied loads, taken about the pivot edge. For each row of base supports, moment about the
-  pivot is summed from the uplift found in the governing STAAD reaction case, then divided by the
-  counterweight's own lever arm to give that row's counterweight demand:
-</p>
-<div style="font-family:'Courier New',monospace; font-size:9pt; margin:0 0 8px 4px;">
-  M = &Sigma;(F &times; d) &nbsp;&nbsp;|&nbsp;&nbsp; CW = M / L
-</div>
-
-{% for row in counterweight.analysis_line_rows %}
-<div class="sub-hdr" style="margin-top:10px;">Counter weight Analysis {{ row.label }}</div>
-{% for d in counterweight.diagrams %}{% if d.label == row.label %}{{ d.svg | safe }}{% endif %}{% endfor %}
-<div style="font-family:'Courier New',monospace; font-size:9pt; line-height:1.8; margin:0 0 8px 4px;">
-  {% for term in row.terms %}{{ term.uplift_kn }} kN x {{ term.arm_m }} m{% if not loop.last %} + {% endif %}{% endfor %}<br/>
-  = {{ row.terms_sum_kn }} kN&middot;m<br/>
-  CW = {{ row.terms_sum_kn }} kN&middot;m / {{ counterweight.cw_lever_m }} m<br/>
-  CW = <strong>{{ row.raw_cw_kn }} kN</strong>
-</div>
-{% endfor %}
-
-<div class="sub-hdr" style="margin-top:10px;">Summation</div>
-<div style="font-family:'Courier New',monospace; font-size:9pt; line-height:1.8; margin:0 0 8px 4px;">
-  Sum counter weight {{ counterweight.analysis_line_rows | map(attribute='label') | join(', ') }}
-  = {% for row in counterweight.analysis_line_rows %}{{ row.raw_cw_kn }} kN{% if not loop.last %} + {% endif %}{% endfor %}
-  = {{ counterweight.raw_sum_kn }} kN<br/><br/>
-  Use factor of safety of {{ counterweight.safety_factor }}<br/>
-  Total counterweight = {{ counterweight.raw_sum_kn }} kN x {{ counterweight.safety_factor }} = {{ counterweight.total_kn }} kN<br/><br/>
-  Use counterweight of <strong>{{ counterweight.minimum_counterweight_tonnes }} tonnes</strong>
-  ({{ counterweight.minimum_counterweight_kn }} kN).
-</div>
-
-{% elif counterweight.errors %}
-<div class="callout" style="font-size:8.3pt; margin-bottom:8px;">
-  Counterweight calculation could not be completed: {{ counterweight.errors | join(' ') }}
-</div>
-{% else %}
-<div class="callout" style="font-size:8.3pt; margin-bottom:8px;">{{ counterweight.message }}</div>
-{% endif %}
-</div>
-{% endif %}
 
 
 {# ==========================================================
