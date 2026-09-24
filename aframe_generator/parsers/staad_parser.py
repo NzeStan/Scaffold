@@ -360,7 +360,16 @@ class StaadParser:
             'platform_live_cases': [],
             'platform_live_case_totals': [],
             'platform_live_member_loads': [],
+            'dead_load_cases': [],
+            'dead_load_total_kn': 0.0,
         }
+
+        # Total scaffold weight: STAAD's summed vertical load for the dead-load case(s)
+        dead_cases = [case for case in load_cases if case['category'] == 'dead']
+        res['dead_load_cases'] = [case['number'] for case in dead_cases]
+        res['dead_load_total_kn'] = round(sum(
+            load_summaries.get(case['number'], {}).get('fy', 0.0) for case in dead_cases
+        ), 3)
 
         live_cases = [case for case in load_cases if case['category'] == 'platform_live']
         if live_cases:

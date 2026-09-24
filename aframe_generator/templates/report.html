@@ -458,6 +458,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </td>
   </tr>
 </table>
+{% if structural.loads.dead_load_total_kn %}
+<div class="callout">
+  Total Scaffold Weight (DL) = <strong>{{ structural.loads.dead_load_total_kn }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span>
+</div>
+{% endif %}
 
 <div class="sub-hdr">Chain Hoist Load</div>
 <table style="border:none; margin:4px 0;">
