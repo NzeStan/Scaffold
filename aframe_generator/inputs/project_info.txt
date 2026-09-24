@@ -2,8 +2,8 @@
 # Lines starting with # are ignored. Format: KEY: value
 
 # Document
-DOCUMENT_NO:         PMS-WA-ARCO-085
-SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-085
+DOCUMENT_NO:         PMS-WA-ARCO-0402
+SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-0402
 REVISION:            0
 
 # Integrated outputs
@@ -31,7 +31,7 @@ TIE_FORCE_FX:
 TIE_FORCE_FZ:
 
 PERMIT_NO:
-ERMT_NO:             PIC/PMS/26/3638
+ERMT_NO:             PIC/PMS/26/
 
 # Optional cover-page callouts, shown once under Brief Description (after the tie display
 # if this project has ties). Leave blank to omit entirely.
@@ -59,6 +59,11 @@ PURPOSE:             replacement and upgrade of obsolete actuator on MOV
 STRUCTURE_ABOVE_GROUND_M: 
 WIND_CALC_HEIGHT_M: 
 DOC_LIFE:            3 Years
+
+# Chain hoist load split. If the design hoist load was divided into equal parts in STAAD
+# (one share per hoist point), enter the number of parts and the report multiplies the
+# STAAD hoist and impact loads back up (SWL, design load, impact). Blank = used as-is.
+HOIST_LOAD_SPLIT:    4
 
 # Connection Stability Check — auto-computed from the STAAD output (member forces,
 # ULS first with an SLS fallback). Override only if that computation can't be trusted:

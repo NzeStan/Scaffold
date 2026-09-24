@@ -48,10 +48,6 @@ class StaadParser:
             'cf':         0.3,
         }
 
-        cl = loads.get('chain_hoist_fy', 0.0)
-        static_kn = round(cl / 1.25, 3) if cl else 0.0
-        swl_candidate = cl or loads.get('platform_live_total_kn') or loads.get('platform_live_udl_kn_m') or 0.0
-
         return {
             'geometry':              geom,
             'supports':              supports,
@@ -65,10 +61,6 @@ class StaadParser:
             'load_combinations':     combos,
             'support_reactions':      support_reactions,
             'frictional_resistance': fric,
-            'swl_kn':                round(swl_candidate, 3),
-            'swl_kg':                round(swl_candidate * 1000 / 9.81, 0) if swl_candidate else 0,
-            'static_weight_kn':      static_kn,
-            'static_weight_kg':      round(static_kn * 1000 / 9.81, 0),
             'members':               members,
         }
 
@@ -350,10 +342,6 @@ class StaadParser:
         load_cases = load_cases or []
         load_summaries = load_summaries or {}
         res = {
-            'chain_hoist_fy': 0.0,
-            'impact_fx': 0.0,
-            'impact_fz': 0.0,
-            'hoist_node': None,
             'platform_live_udl_kn_m': 0.0,
             'platform_live_udls_kn_m': [],
             'platform_live_total_kn': 0.0,
@@ -408,19 +396,6 @@ class StaadParser:
                 for udl in case.get('member_udls', [])
                 if udl['direction'] == 'Y'
             ]
-
-        m = re.search(r'CHAIN HOIST.*?JOINT LOAD.*?(\d+)\s+FY\s+([-\d.]+)', std, re.DOTALL | re.IGNORECASE)
-        if m:
-            res['hoist_node'] = int(m.group(1))
-            res['chain_hoist_fy'] = abs(float(m.group(2)))
-
-        m = re.search(r'IMPACT.*?X.*?JOINT LOAD.*?\d+\s+FX\s+([\d.]+)', std, re.DOTALL | re.IGNORECASE)
-        if m:
-            res['impact_fx'] = float(m.group(1))
-
-        m = re.search(r'IMPACT.*?Z.*?JOINT LOAD.*?\d+\s+FZ\s+([\d.]+)', std, re.DOTALL | re.IGNORECASE)
-        if m:
-            res['impact_fz'] = float(m.group(1))
 
         return res
 

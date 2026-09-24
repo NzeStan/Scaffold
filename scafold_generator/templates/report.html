@@ -581,40 +581,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 </div>
 {% endif %}
 
-{% if false %}
-<div class="sub-hdr">Chain Hoist Load</div>
-<table style="border:none; margin:4px 0;">
-  <tr>
-    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 1991, 6.3.4.1</td>
-    <td style="border:none; line-height:1.7;">
-      The equipment static weight is
-      <strong>{{ structural.static_weight_kg | int }} kg ~ {{ structural.static_weight_kn }} kN</strong>.
-      A <strong>25% dynamic allowance</strong> was applied for chain hoist operation.
-    </td>
-  </tr>
-</table>
-<div class="callout">
-  Static weight = {{ structural.static_weight_kg | int }} kg x 9.81 / 1000 = <strong>{{ structural.static_weight_kn }} kN</strong><br/>
-  Chain Hoist Design Load (CL) = {{ structural.static_weight_kn }} x (1 + 0.25) = <strong>{{ structural.loads.chain_hoist_fy }} kN</strong>
-</div>
-
-<div class="sub-hdr" style="margin-top:8px;">Impact Load</div>
-<table style="border:none; margin:4px 0;">
-  <tr>
-    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 1991, 6.3.4.1</td>
-    <td style="border:none; line-height:1.7;">
-      30% of the chain hoist design load was assumed as a horizontal impact load, applied at the hoist
-      attachment point independently in X and Z directions.
-    </td>
-  </tr>
-</table>
-<div class="callout">
-  Impact Load (ILX) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fx }} kN</strong> (X-axis)<br/>
-  Impact Load (ILZ) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fz }} kN</strong> (Z-axis)
-</div>
-
-{% endif %}
-
 {% if has_wind %}
 <div class="sub-hdr" style="margin-top:8px;">Wind Load</div>
 <table style="border:none; margin:4px 0;">
@@ -630,11 +596,6 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 <div class="callout">
   Total Wind Load applied - X Axis (WLX) = <strong>{{ structural.wind_loads.total_x }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span><br/>
   Total Wind Load applied - Z Axis (WLZ) = <strong>{{ structural.wind_loads.total_z }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span>
-</div>
-{% else %}
-<div class="callout" style="font-size:8.5pt;">
-  This scaffold is erected indoors — wind actions per EN 1991-1-4:2005 are not applicable and have not
-  been considered in this design.
 </div>
 {% endif %}
 

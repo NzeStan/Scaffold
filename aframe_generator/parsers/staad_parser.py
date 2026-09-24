@@ -24,6 +24,7 @@ class StaadParser:
         loads         = self._parse_loads(std, load_cases, load_summaries)
         combos        = self._parse_load_combinations(std)
         members       = self._parse_member_incidences(std, geom['nodes'])
+        ladder_beams  = self._parse_ladder_beams(geom, members, load_cases)
         support_reactions = self._parse_support_reactions(out, supports.get('tie_nodes', []), load_cases, combos, supports.get('fixed_nodes', []))
 
         # Wind: identify wind load case numbers from .std, then look them up in .out
@@ -70,6 +71,7 @@ class StaadParser:
             'static_weight_kn':      static_kn,
             'static_weight_kg':      round(static_kn * 1000 / 9.81, 0),
             'members':               members,
+            'ladder_beams':          ladder_beams,
         }
 
     # file helpers
@@ -235,6 +237,7 @@ class StaadParser:
                 'category': self._classify_load_case(load_type, title),
                 'member_udls': self._extract_member_udls(block),
                 'joint_loads': self._extract_joint_loads(block),
+                'joint_load_nodes': self._extract_joint_load_nodes(block),
             })
         return cases
 
@@ -318,6 +321,16 @@ class StaadParser:
         ):
             loads.append({'direction': m.group(1).upper(), 'value': float(m.group(2))})
         return loads
+
+    def _extract_joint_load_nodes(self, block):
+        """Joints named on JOINT LOAD lines, e.g. '93 95 FY -6.131' -> [93, 95]."""
+        nodes = []
+        for m in re.finditer(
+            r'^[ \t]*((?:\d+|TO)(?:[ \t]+(?:\d+|TO))*)[ \t]+F[XYZ]\b',
+            block, re.IGNORECASE | re.MULTILINE
+        ):
+            nodes.extend(self._node_range(m.group(1)))
+        return list(dict.fromkeys(nodes))
 
     def _parse_load_summation_totals(self, out):
         totals = {}
@@ -930,6 +943,74 @@ class StaadParser:
         }
 
     # member incidences + lengths
+
+    def _parse_ladder_beams(self, geom, members, load_cases):
+        """
+        Ladder beams = the horizontal beams the chain hoist hangs from. Starting at each
+        hoist joint (JOINT LOAD nodes of the chain-hoist load cases), follow the connected
+        horizontal members that continue along one straight line; the beam is that whole
+        line, end to end. Two hoist joints on the same line are the same beam.
+
+        Returns [{'axis': 'X'|'Z', 'length_mm': float, 'elevation_m': float, 'members': [...]}]
+        """
+        nodes = geom.get('nodes') or {}
+        tol = 0.01
+        hoist_nodes = []
+        for case in load_cases:
+            if case['category'] == 'chain_hoist':
+                hoist_nodes += [n for n in case.get('joint_load_nodes', []) if n in nodes]
+        hoist_nodes = list(dict.fromkeys(hoist_nodes))
+
+        def horizontal_axis(member):
+            (x1, y1, z1), (x2, y2, z2) = nodes[member['j1']], nodes[member['j2']]
+            if abs(y2 - y1) > tol:
+                return None
+            if abs(z2 - z1) <= tol < abs(x2 - x1):
+                return 'X'
+            if abs(x2 - x1) <= tol < abs(z2 - z1):
+                return 'Z'
+            return None
+
+        def chain(start, axis):
+            """Members joined end to end along one line through joint `start`."""
+            perp = 2 if axis == 'X' else 0
+            line = lambda j: (round(nodes[j][1], 2), round(nodes[j][perp], 2))
+            key = line(start)
+            found, seen, queue = {}, {start}, [start]
+            while queue:
+                joint = queue.pop()
+                for mid, mem in members.items():
+                    if joint not in (mem['j1'], mem['j2']):
+                        continue
+                    if horizontal_axis(mem) != axis or line(mem['j1']) != key or line(mem['j2']) != key:
+                        continue
+                    found[mid] = mem
+                    for other in (mem['j1'], mem['j2']):
+                        if other not in seen:
+                            seen.add(other)
+                            queue.append(other)
+            along = 0 if axis == 'X' else 2
+            coords = [nodes[j][along] for j in seen]
+            return {
+                'axis': axis,
+                'length_mm': round((max(coords) - min(coords)) * 1000, 0),
+                'elevation_m': round(nodes[start][1] - geom.get('y_min', 0.0), 3),
+                'members': sorted(found),
+            }
+
+        beams, seen_beams = [], set()
+        for hoist in hoist_nodes:
+            axes = {horizontal_axis(m) for m in members.values() if hoist in (m['j1'], m['j2'])} - {None}
+            candidates = [chain(hoist, axis) for axis in axes]
+            candidates = [c for c in candidates if c['members']]
+            if not candidates:
+                continue
+            # A hoist joint on the crossing of two horizontals: the ladder beam is the shorter run.
+            beam = min(candidates, key=lambda c: c['length_mm'])
+            if tuple(beam['members']) not in seen_beams:
+                seen_beams.add(tuple(beam['members']))
+                beams.append(beam)
+        return sorted(beams, key=lambda b: b['members'])
 
     def _parse_member_incidences(self, std, nodes):
         """

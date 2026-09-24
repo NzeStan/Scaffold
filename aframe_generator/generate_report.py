@@ -763,6 +763,56 @@ def append_engineering_drawings(report_pdf, drawings, model_image_path=None):
 # -- Installation note generator -----------------------------------------------
 
 
+def _ladder_beam_note(beams, default_height):
+    """Ladder-beam install step, worded from the beams found in the STAAD model
+    (the members the chain hoist hangs from) rather than the overall model size."""
+    if not beams:
+        return (
+            f"Install the ladder beam horizontally across the top of the standards "
+            f"at {default_height:.1f}m height, connecting to both standards with right-angle "
+            f"double couplers. Ensure the beam is level before fully tightening all couplers."
+        )
+
+    lengths = sorted({int(b['length_mm']) for b in beams}, reverse=True)
+    elevations = {round(b['elevation_m'], 1) for b in beams}
+    height = elevations.pop() if len(elevations) == 1 else default_height
+    if len(beams) == 1:
+        return (
+            f"Install the {lengths[0]}mm ladder beam horizontally across the top of the standards "
+            f"at {height:.1f}m height, connecting to both standards with right-angle double "
+            f"couplers. Ensure the beam is level before fully tightening all couplers."
+        )
+
+    count = {2: 'two', 3: 'three', 4: 'four'}.get(len(beams), str(len(beams)))
+    size = f"{lengths[0]}mm" if len(lengths) == 1 else ' / '.join(f"{n}mm" for n in lengths)
+    return (
+        f"Install the {count} {size} ladder beams horizontally across the top of the standards "
+        f"at {height:.1f}m height, connecting each beam to both of its standards with right-angle "
+        f"double couplers. Ensure each beam is level before fully tightening all couplers."
+    )
+
+
+def _apply_hoist_load_split(structural, split):
+    """The chain hoist load was divided into `split` equal parts in the STAAD model (one
+    share per hoist point), so the real hoist load, impact loads, static weight and SWL are
+    the STAAD values multiplied back up by `split`."""
+    ld = structural['loads']
+    per_point = ld['chain_hoist_fy']
+    if not per_point:
+        return
+    ld['hoist_load_split'] = split
+    ld['chain_hoist_fy_per_point'] = round(per_point, 3)
+    ld['chain_hoist_fy'] = round(per_point * split, 3)
+    ld['impact_fx'] = round(ld['impact_fx'] * split, 3)
+    ld['impact_fz'] = round(ld['impact_fz'] * split, 3)
+
+    static_kn = round(ld['chain_hoist_fy'] / 1.25, 3)
+    structural['static_weight_kn'] = static_kn
+    structural['static_weight_kg'] = round(static_kn * 1000 / 9.81, 0)
+    structural['swl_kn'] = ld['chain_hoist_fy']
+    structural['swl_kg'] = round(ld['chain_hoist_fy'] * 1000 / 9.81, 0)
+
+
 def make_install_notes(structural):
     g  = structural['geometry']
     s  = structural['supports']
@@ -771,6 +821,14 @@ def make_install_notes(structural):
     mids    = g['mid_lifts']
     tie_h   = s.get('tie_heights', [H])
     tie_n   = s.get('tie_nodes', [])
+
+    # Singular/plural wording for the hoist steps, from the STAAD model
+    hoist_points = {
+        n for c in structural.get('load_cases', []) if c['category'] == 'chain_hoist'
+        for n in c.get('joint_load_nodes', [])
+    }
+    point_word = 'points' if len(hoist_points) > 1 else 'point'
+    beam_word = 'beams' if len(structural.get('ladder_beams') or []) > 1 else 'beam'
 
     notes = [
         "The scaffold working drawings and purpose of the scaffold must be reviewed and "
@@ -798,15 +856,13 @@ def make_install_notes(structural):
         "Fix all vertical bracing members diagonally across the face panels of the A-frame "
         "structure using right-angle couplers to provide sway resistance in both X and Z axes "
         "as shown on the working drawing.",
-        f"Install the {W*1000:.0f}mm ladder beam horizontally across the top of the standards "
-        f"at {H:.1f}m height, connecting to both standards with right-angle double couplers. "
-        f"Ensure the beam is level before fully tightening all couplers.",
-        "Rig the chain hoist to the ladder beam at the designated hoist point shown on the "
-        "working drawing. Confirm the hoist is rated for a minimum safe working load equal to "
-        "or greater than the design SWL.",
-        "The chain hoist attachment point and all coupler connections at ladder beam level shall "
-        "be inspected and torque-checked by a competent person before any lifting operation "
-        "commences.",
+        _ladder_beam_note(structural.get('ladder_beams'), H),
+        f"Rig the chain hoist to the ladder {beam_word} at the designated hoist {point_word} shown "
+        f"on the working drawing. Confirm the hoist is rated for a minimum safe working load "
+        f"equal to or greater than the design SWL.",
+        f"The chain hoist attachment {point_word} and all coupler connections at ladder beam "
+        f"level shall be inspected and torque-checked by a competent person before any lifting "
+        f"operation commences.",
     ]
 
     if tie_n:
@@ -860,6 +916,11 @@ def main():
     print("  Parsing STAAD files ...")
     parser     = StaadParser(str(std_path), str(out_path))
     structural = parser.parse()
+    hoist_split = _optional_float(project.get('HOIST_LOAD_SPLIT'))
+    if hoist_split is not None and hoist_split > 1:
+        _apply_hoist_load_split(structural, hoist_split)
+        print(f"  Hoist load: STAAD value x {_format_number(hoist_split)} "
+              f"(HOIST_LOAD_SPLIT) -> {structural['loads']['chain_hoist_fy']:g} kN")
     g          = structural['geometry']
 
     drawing_format = _normalise_drawing_format(
@@ -884,22 +945,43 @@ def main():
     if project.get('WIND_CALC_HEIGHT_M', '').strip() and wind_height_override is None:
         print("  [WARN] WIND_CALC_HEIGHT_M is not numeric; falling back to STAAD height")
     wind_height = wind_height_override if wind_height_override is not None else g['height']
-    print(f"  Wind calc : z = {_format_number(wind_height)}m ...")
     wind = WindCalculator(wind_height).calculate()
     wind['z_default'] = g['height']
-    print(f"             qp = {wind['qp_nm2']:.2f} N/m2  |  UDL = {wind['wind_udl']:.6f} kN/m")
+    if structural['wind_loads'].get('has_wind'):
+        print(f"  Wind calc : z = {_format_number(wind_height)}m ...")
+        print(f"             qp = {wind['qp_nm2']:.2f} N/m2  |  UDL = {wind['wind_udl']:.6f} kN/m")
+    else:
+        print("  Wind calc : skipped (no wind load cases in the STAAD model)")
 
     # -- 4. Logos & images -----------------------------------------------------
     nlng_logo    = load_logo('nlng')
     company_logo = load_logo('company')
     site_photo = load_image('site_photo')   # no placeholder if missing - intentional
+    has_wind_loads = bool(structural['wind_loads'].get('has_wind'))
     images = {k: load_image(k) for k in [
         '3d_model',
-        'load_chain_hoist', 'load_impact_x', 'load_impact_z',
-        'load_wind_x', 'load_wind_z',
+        *(['load_wind_x', 'load_wind_z'] if has_wind_loads else []),
         'connection_table',
         'deflection_vertical_table', 'deflection_horizontal_table',
     ]}
+
+    # One diagram per hoist / impact load case: CL, CL-1, CL-2 ... (image files
+    # load_chain_hoist.png, load_chain_hoist_1.png, load_chain_hoist_2.png ...)
+    load_diagrams = []
+    for category, base, name, caption in (
+        ('chain_hoist', 'load_chain_hoist', 'Chain Hoist', 'Chain Hoist Load (CL)'),
+        ('impact_x',    'load_impact_x',    'Impact X',    'Impact Load X (ILX)'),
+        ('impact_z',    'load_impact_z',    'Impact Z',    'Impact Load Z (ILZ)'),
+    ):
+        count = max(1, sum(1 for c in structural['load_cases'] if c['category'] == category))
+        for i in range(count):
+            key = base if i == 0 else f'{base}_{i}'
+            suffix = '' if i == 0 else f'-{i}'
+            images[key] = load_image(key)
+            load_diagrams.append({
+                'image': images[key], 'file': key + '.png',
+                'name': name + suffix, 'caption': caption + suffix,
+            })
     loaded = sum(1 for v in images.values() if v)
     print(f"  Images    : {loaded}/{len(images)} found")
 
@@ -1156,6 +1238,7 @@ def main():
         nlng_logo     = nlng_logo,
         company_logo  = company_logo,
         images        = images,
+        load_diagrams = load_diagrams,
         vert_allow    = vert_allow,
         horiz_allow   = horiz_allow,
         total_horiz_x = total_horiz_x,

@@ -477,7 +477,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 </table>
 <div class="callout">
   Static weight = {{ structural.static_weight_kg | int }} kg x 9.81 / 1000 = <strong>{{ structural.static_weight_kn }} kN</strong><br/>
-  Chain Hoist Design Load (CL) = {{ structural.static_weight_kn }} x (1 + 0.25) = <strong>{{ structural.loads.chain_hoist_fy }} kN</strong>
+  Chain Hoist Design Load (CL) = {{ structural.static_weight_kn }} x (1 + 0.25) = <strong>{{ structural.loads.chain_hoist_fy }} kN</strong>{% if structural.loads.hoist_load_split %} (applied in the STAAD model as {{ structural.loads.hoist_load_split | int }} equal loads of {{ structural.loads.chain_hoist_fy_per_point }} kN){% endif %}
 </div>
 
 <div class="sub-hdr" style="margin-top:8px;">Impact Load</div>
@@ -511,31 +511,18 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   Total Wind Load applied - X Axis (WLX) = <strong>{{ structural.wind_loads.total_x }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span><br/>
   Total Wind Load applied - Z Axis (WLZ) = <strong>{{ structural.wind_loads.total_z }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span>
 </div>
-{% else %}
-<div class="callout" style="font-size:8.5pt;">
-  This scaffold is erected indoors — wind actions per EN 1991-1-4:2005 are not applicable and have not
-  been considered in this design.
-</div>
 {% endif %}
 
 {# -- Load Diagrams inline -- #}
 <div class="sub-hdr" style="margin-top:8mm;">Load Diagrams</div>
 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+  {% for d in load_diagrams %}
   <div style="flex:1; min-width:140px;">
-    {% if images['load_chain_hoist'] %}<img src="{{ images['load_chain_hoist'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Chain Hoist</strong><small>load_chain_hoist.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Chain Hoist Load (CL)</div>
+    {% if d.image %}<img src="{{ d.image }}" class="app-img" style="max-height:180px;"/>
+    {% else %}<div class="img-box" style="min-height:140px;"><strong>{{ d.name }}</strong><small>{{ d.file }}</small></div>{% endif %}
+    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">{{ d.caption }}</div>
   </div>
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_impact_x'] %}<img src="{{ images['load_impact_x'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Impact X</strong><small>load_impact_x.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Impact Load X (ILX)</div>
-  </div>
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_impact_z'] %}<img src="{{ images['load_impact_z'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Impact Z</strong><small>load_impact_z.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Impact Load Z (ILZ)</div>
-  </div>
+  {% endfor %}
   {% if has_wind %}
   <div style="flex:1; min-width:140px;">
     {% if images['load_wind_x'] %}<img src="{{ images['load_wind_x'] }}" class="app-img" style="max-height:180px;"/>
