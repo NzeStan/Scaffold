@@ -25,6 +25,12 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; color: var(-
 @page { size: A4 portrait; margin: 12mm 12mm 16mm 12mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #888; font-family: Arial, sans-serif; } }
 @media print { @page { margin: 12mm 12mm 16mm 12mm; } }
 
+/* Attachment pages - reserved A4 pages; the PDF page is drawn onto the empty area
+   after rendering. Sizes must match SLOT_* / HEAD_MM in shared/report_attachments.py */
+.attachment-page { height: 265mm; overflow: hidden; margin: 0; page-break-before: always; break-before: page; page-break-after: always; break-after: page; }
+.attachment-head { height: 16mm; overflow: hidden; }
+.attachment-slot { height: 249mm; }
+
 /* Page breaks */
 .page-cover  { page-break-after: always; break-after: page; }
 .page-toc    { page-break-after: always; break-after: page; }
@@ -373,6 +379,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     ('conclusion',         'Conclusion, Recommendations &amp; Installation Notes'),
   ] %}
   {% for anchor, title in sections %}
+  {% if anchor == 'conclusion' %}{% for a in attachments %}
+  <div class="toc-entry">
+    <a href="#{{ a.anchor }}">{{ a.title }}</a>
+  </div>
+  {% endfor %}{% endif %}
   {% if anchor %}
   <div class="toc-entry">
     <a href="#{{ anchor }}">{{ title }}</a>
@@ -467,11 +478,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 <div class="sub-hdr">Chain Hoist Load</div>
 <table style="border:none; margin:4px 0;">
   <tr>
-    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 1991, 6.3.4.1</td>
+    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;"></td>
     <td style="border:none; line-height:1.7;">
       The equipment static weight is
       <strong>{{ structural.static_weight_kg | int }} kg &asymp; {{ structural.static_weight_kn }} kN</strong>.
-      A <strong>25% dynamic allowance</strong> was applied for chain hoist operation.
+      A <strong>25% dynamic allowance</strong> was adopted for chain hoist operation.
     </td>
   </tr>
 </table>
@@ -483,7 +494,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 <div class="sub-hdr" style="margin-top:8px;">Impact Load</div>
 <table style="border:none; margin:4px 0;">
   <tr>
-    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 1991, 6.3.4.1</td>
+    <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">NLNG PRD.15.05.400, &sect;8.5</td>
     <td style="border:none; line-height:1.7;">
       30% of the chain hoist design load was assumed as a horizontal impact load, applied at the hoist
       attachment point independently in X and Z directions.
@@ -850,6 +861,17 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 
 
 {# ==========================================================
+   ATTACHMENTS - one reserved page per PDF page (dropped in attachments/)
+   ========================================================== #}
+{% for a in attachments %}{% for pg in range(1, a.pages + 1) %}
+<div class="attachment-page"{% if pg == 1 %} id="{{ a.anchor }}"{% endif %}>
+  <div class="attachment-head"><div class="section-hdr">{{ a.title | upper }}</div></div>
+  <div class="attachment-slot"></div>
+</div>
+{% endfor %}{% endfor %}
+
+
+{# ==========================================================
    SHEET 8 - CONCLUSION + INSTALLATION NOTES
    ========================================================== #}
 <div class="page-calc" id="conclusion">
@@ -905,6 +927,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     {% if has_wind %}<tr><td>BS EN 1991-1-4:2005</td><td>Eurocode 1: Actions on Structures - Wind Actions</td><td style="text-align:center;">2005</td></tr>{% endif %}
     <tr><td>BS EN 1990:2002</td><td>Eurocode: Basis of Structural Design &mdash; Load Combinations, Partial Factors, and Limit States (ULS/SLS/EQU)</td><td style="text-align:center;">2002</td></tr>
     <tr><td>NASC TG20:13</td><td>Guide to Good Practice for Scaffolding with Tubes and Fittings</td><td style="text-align:center;">2013</td></tr>
+    <tr><td>NLNG PRD.15.05.400 Rev. 2</td><td>Assurance of Engineered Scaffolding Systems &mdash; &sect;8.5 "Lifting Operation," p. 17. NLNG Management System, Nigeria LNG Limited</td><td style="text-align:center;">2024</td></tr>
     {% if has_wind %}<tr><td>Durst, C.S.</td><td>Wind Speeds Over Short Periods of Time. The Meteorological Magazine, 89, 181&ndash;186 &mdash; basis of 3-second gust to 10-minute mean conversion</td><td style="text-align:center;">1960</td></tr>{% endif %}
     <tr><td>STAAD.Pro CONNECT</td><td>STAAD.Pro CONNECT Edition V22 - Structural Analysis and Design Software</td><td style="text-align:center;">2022</td></tr>
   </tbody>

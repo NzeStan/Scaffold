@@ -2,8 +2,8 @@
 # Lines starting with # are ignored. Format: KEY: value
 
 # Document
-DOCUMENT_NO:         PMS-WA-ARCO-081
-SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-081
+DOCUMENT_NO:         PMS-WA-ARCO-0810
+SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-0810
 REVISION:            0
 
 # Integrated outputs

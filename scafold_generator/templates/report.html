@@ -25,6 +25,12 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; color: var(-
 @page { size: A4 portrait; margin: 12mm 12mm 16mm 12mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #888; font-family: Arial, sans-serif; } }
 @media print { @page { margin: 12mm 12mm 16mm 12mm; } }
 
+/* Attachment pages - reserved A4 pages; the PDF page is drawn onto the empty area
+   after rendering. Sizes must match SLOT_* / HEAD_MM in shared/report_attachments.py */
+.attachment-page { height: 265mm; overflow: hidden; margin: 0; page-break-before: always; break-before: page; page-break-after: always; break-after: page; }
+.attachment-head { height: 16mm; overflow: hidden; }
+.attachment-slot { height: 249mm; }
+
 /* Page breaks */
 .page-cover  { page-break-after: always; break-after: page; }
 .page-toc    { page-break-after: always; break-after: page; }
@@ -406,6 +412,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     ('conclusion',         'Conclusion, Recommendations &amp; Installation Notes'),
   ] %}
   {% for anchor, title in sections %}
+  {% if anchor == 'conclusion' %}{% for a in attachments %}
+  <div class="toc-entry">
+    <a href="#{{ a.anchor }}">{{ a.title }}</a>
+  </div>
+  {% endfor %}{% endif %}
   {% if anchor %}
   <div class="toc-entry">
     <a href="#{{ anchor }}">{{ title }}</a>
@@ -947,6 +958,17 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 </div>
 {% endif %}
 </div>
+
+
+{# ==========================================================
+   ATTACHMENTS - one reserved page per PDF page (dropped in attachments/)
+   ========================================================== #}
+{% for a in attachments %}{% for pg in range(1, a.pages + 1) %}
+<div class="attachment-page"{% if pg == 1 %} id="{{ a.anchor }}"{% endif %}>
+  <div class="attachment-head"><div class="section-hdr">{{ a.title | upper }}</div></div>
+  <div class="attachment-slot"></div>
+</div>
+{% endfor %}{% endfor %}
 
 
 {# ==========================================================

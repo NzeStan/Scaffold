@@ -86,6 +86,8 @@ DRAWING_DIR  = PROJECT_ROOT / '2D_3D_GENERATOR'
 sys.path.insert(0, str(ROOT))
 from parsers.staad_parser import StaadParser
 from parsers.wind_calc    import WindCalculator
+sys.path.insert(0, str(PROJECT_ROOT / 'shared'))
+from report_attachments import collect_attachments, place_attachments
 
 # -- Project info --------------------------------------------------------------
 
@@ -985,6 +987,16 @@ def main():
     loaded = sum(1 for v in images.values() if v)
     print(f"  Images    : {loaded}/{len(images)} found")
 
+    # PDFs dropped in attachments/ are placed in the report before the conclusion
+    attachments = collect_attachments(ROOT / 'attachments')
+    if attachments:
+        at = next(i for i, (anchor, _) in enumerate(REPORT_OUTLINE) if anchor == 'conclusion')
+        REPORT_OUTLINE[at:at] = [
+            (a['anchor'], a['title']) for a in attachments
+        ]
+        print(f"  Attachments: {len(attachments)} PDF(s), "
+              f"{sum(a['pages'] for a in attachments)} page(s)")
+
     # -- 5. Derived values -----------------------------------------------------
     wl   = structural['wind_loads']
     ld   = structural['loads']
@@ -1238,6 +1250,7 @@ def main():
         nlng_logo     = nlng_logo,
         company_logo  = company_logo,
         images        = images,
+        attachments   = attachments,
         load_diagrams = load_diagrams,
         vert_allow    = vert_allow,
         horiz_allow   = horiz_allow,
@@ -1330,6 +1343,7 @@ def main():
         print("  B) playwright install chromium   (best quality, one-time ~150 MB)")
         print("  C) Open HTML in Chrome/Edge -> Ctrl+P -> Save as PDF")
     else:
+        place_attachments(pdf_path, attachments)
         show_3d_iso = _bool_setting(project.get("SHOW_3D_ISOMETRIC_PAGE"), True)
         model_img = find_image_file('3d_model') if show_3d_iso else None
         if engineering_drawings or model_img:
