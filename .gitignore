@@ -1,8 +1,15 @@
 scafold_generator/output/
-2D_3D_GENERATOR/pdf_output/
-scafold_generator/output/
-scafold_generator/images/
+scafold_generator/images/*
+!scafold_generator/images/README.txt
 aframe_generator/output/
-aframe_generator/images/
+aframe_generator/images/*
+!aframe_generator/images/README.txt
+2D_3D_GENERATOR/pdf_output/
+2D_3D_GENERATOR/dxf_output/
+2D_3D_GENERATOR/title_block_values.txt
 to_be_deleted_after_radial_implementation/
 scaffold_structure/to_be_deleted_after_radial_implementation/
+
+# Python
+__pycache__/
+*.pyc

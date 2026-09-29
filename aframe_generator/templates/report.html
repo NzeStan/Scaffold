@@ -508,8 +508,8 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   </tr>
 </table>
 <div class="callout">
-  Impact Load (ILX) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fx }} kN</strong> (X-axis)<br/>
-  Impact Load (ILZ) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fz }} kN</strong> (Z-axis)
+  Impact Load (ILX) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fx }} kN</strong> (X-axis){% if structural.loads.hoist_load_split %} (applied in the STAAD model as {{ structural.loads.hoist_load_split | int }} equal loads of {{ structural.loads.impact_fx_per_point }} kN){% endif %}<br/>
+  Impact Load (ILZ) = {{ structural.loads.chain_hoist_fy }} x 0.30 = <strong>{{ structural.loads.impact_fz }} kN</strong> (Z-axis){% if structural.loads.hoist_load_split %} (applied in the STAAD model as {{ structural.loads.hoist_load_split | int }} equal loads of {{ structural.loads.impact_fz_per_point }} kN){% endif %}
 </div>
 
 {% if has_wind %}

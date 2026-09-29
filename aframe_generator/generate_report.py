@@ -805,6 +805,8 @@ def _apply_hoist_load_split(structural, split):
     ld['hoist_load_split'] = split
     ld['chain_hoist_fy_per_point'] = round(per_point, 3)
     ld['chain_hoist_fy'] = round(per_point * split, 3)
+    ld['impact_fx_per_point'] = round(ld['impact_fx'], 3)
+    ld['impact_fz_per_point'] = round(ld['impact_fz'], 3)
     ld['impact_fx'] = round(ld['impact_fx'] * split, 3)
     ld['impact_fz'] = round(ld['impact_fz'] * split, 3)
 
