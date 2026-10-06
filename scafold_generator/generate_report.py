@@ -1508,7 +1508,7 @@ def main():
     # every support is a plain, fully-fixed support (no friction spring defined),
     # the calc would just be showing the parser's meaningless fallback default -
     # so hide it regardless of SCAFFOLD_TYPE.
-    show_frictional_resistance = bool(structural.get('supports', {}).get('base_nodes'))
+    show_frictional_resistance = bool(structural.get('supports', {}).get('has_springs'))
     has_scaffold_type = bool(str(project.get('SCAFFOLD_TYPE') or '').strip())
     has_handrail = bool(hl.get('has_x') or hl.get('has_z'))
     has_ties = bool(structural.get('supports', {}).get('tie_nodes'))

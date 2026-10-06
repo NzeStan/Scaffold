@@ -133,6 +133,7 @@ class StaadParser:
     def _parse_supports(self, std, geom):
         base_nodes, tie_nodes, fixed_nodes = [], [], []
         kfx = kfz = 5.596
+        has_springs = False
 
         m = re.search(
             r'SUPPORTS\s+(.*?)(?=LOAD\s+\d|DEFINE|PERFORM|PARAMETER|FINISH)',
@@ -140,6 +141,8 @@ class StaadParser:
         )
         if m:
             sec = m.group(1)
+            # Frictional restraint exists only if the SUPPORTS block carries KFX/KFZ springs
+            has_springs = bool(re.search(r'\bKFX\s+[-+]?\d', sec, re.IGNORECASE))
             bm = re.search(
                 r'([\d\s]+TO[\d\s]+|[\d\s]+)\s+FIXED\s+BUT\s+MX\s+MY\s+MZ'
                 r'\s+KFX\s+([\d.]+)\s+KFZ\s+([\d.]+)',
@@ -178,6 +181,7 @@ class StaadParser:
             'tie_heights':  tie_heights,
             'kfx': kfx,
             'kfz': kfz,
+            'has_springs': has_springs,
         }
 
     def _node_range(self, s):

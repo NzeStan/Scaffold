@@ -483,14 +483,8 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     <td style="border:none; padding:2px 0; line-height:1.7;">
       A 3-D model was analysed using <strong>STAAD.Pro CONNECT Edition (V22)</strong> in accordance with
       EN 1993-1-1:2005.
-      {% if show_frictional_resistance %}
-      Base supports at each standard foot were modelled with horizontal translations restrained and vertical
-      translation released, with all rotational degrees of freedom released, representing the assumed frictional
-      ground-contact condition. Deflection checks were carried out by comparing the maximum deflection values
+      {% if show_frictional_resistance %}Supports were modelled as pinned, with horizontal translations restrained by the frictional spring (KFX/KFZ = {{ structural.frictional_resistance.kfx }} kN/m) and all rotational degrees of freedom released. {% else %}Supports were modelled as pinned (FIXED BUT MX MY MZ): all translational degrees of freedom were restrained and all rotational degrees of freedom were released. {% endif %}Deflection checks were carried out by comparing the maximum deflection values
       obtained from the analysis with the applicable allowable deflection limits.
-      {% else %}
-      Supports are modelled as fixed supports, providing full translational and rotational restraint to represent rigid anchorage to the supporting structure.
-      {% endif %}
     </td>
   </tr>
 </table>
