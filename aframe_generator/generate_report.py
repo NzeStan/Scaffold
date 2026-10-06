@@ -1261,6 +1261,7 @@ def main():
         cover_callout_font_pt = cover_callout_font_pt,
         has_ties = has_ties,
         has_wind = has_wind,
+        show_frictional_resistance = bool(structural.get('supports', {}).get('has_springs')),
         show_assurance_note = show_assurance_note,
         signatory_rows = signatory_rows,
         has_any_signatory_id = has_any_signatory_id,

@@ -449,11 +449,8 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 12811-1</td>
     <td style="border:none; padding:2px 0; line-height:1.7;">
       A 3-D model was analysed using <strong>STAAD.Pro CONNECT Edition (V22)</strong> in accordance with
-      EN 1993-1-1:2005. Base supports at each standard foot were modelled with horizontal translations
-      restrained and vertical translation released, with all rotational degrees of freedom released,
-      representing the assumed frictional ground-contact condition. Deflection checks were carried out by
-      comparing the maximum deflection values obtained from the analysis with the applicable allowable
-      deflection limits.
+      EN 1993-1-1:2005. {% if show_frictional_resistance %}Supports were modelled as pinned, with horizontal translations restrained by the frictional spring (KFX/KFZ = {{ structural.frictional_resistance.kfx }} kN/m) and all rotational degrees of freedom released. {% else %}Supports were modelled as pinned (FIXED BUT MX MY MZ): all translational degrees of freedom were restrained and all rotational degrees of freedom were released. {% endif %}Deflection checks were carried out by comparing the maximum
+      deflection values obtained from the analysis with the applicable allowable deflection limits.
     </td>
   </tr>
 </table>
@@ -769,6 +766,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 {% endif %}
 {% endif %}
 
+{% if show_frictional_resistance %}
 <div class="section-hdr">FRICTIONAL RESISTANCE</div>
 {% set fr = structural.frictional_resistance %}
 <table style="border:none; width:auto;">
@@ -781,6 +779,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   <tr><td style="border:none; padding:3px 8px 3px 0;">Spring Stiffness = FR / 0.15</td>
       <td style="border:none; padding:3px 0;">= <strong>{{ fr.resistance }} kN/m</strong> &lt;- applied as KFX/KFZ in STAAD model</td></tr>
 </table>
+{% endif %}
 
 {# ── Vertical Deflection ── inside same div as Connection Stability so they are ALWAYS on the same page #}
 <div id="deflection-check" style="margin-top:7mm; padding-top:5mm; border-top:1px solid var(--border);">
