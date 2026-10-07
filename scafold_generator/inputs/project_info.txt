@@ -15,7 +15,7 @@ ENGINEERING_DRAWING_FORMAT:  standard
 SHOW_3D_ISOMETRIC_PAGE:      no
 
 # Scaffold location and type
-LOCATION:            Train 3
+LOCATION:            Train 3 (3-k-1418 MR and 3-k-1423/1433 PR Filter house)
 AREA:                D
 SCAFFOLD_TYPE:       
 RISK_LEVEL:          High
@@ -49,8 +49,8 @@ DESIGNED_BY_ID:      PMS/C3-1141
 DESIGNED_BY_NAME:    Nnamani, Ifeanyi
 VERIFIED_BY_ID:      PMS/612C
 VERIFIED_BY_NAME:    Olowo, Peter
-REVIEWED_BY_ID:      PIC/32C
-REVIEWED_BY_NAME:    Ogili, Ugochukwu
+REVIEWED_BY_ID:      PIC/33C
+REVIEWED_BY_NAME:    Ezewoko, Joseph
 APPROVED_BY_ID:      PIC/2
 APPROVED_BY_NAME:    Chima, Tasieobi
 CHECKED_BY_ID:       PMS/6
@@ -65,7 +65,7 @@ EQUIPMENT_NAME:
 EQUIPMENT_TAG:      
 LINE_NUMBER:        
 WORK_ORDER:          
-PURPOSE:             personnel maintenance access
+PURPOSE:             personnel maintenance access to unscrew and take out bolt
 STRUCTURE_ABOVE_GROUND_M: 
 WIND_CALC_HEIGHT_M: 6
 DOC_LIFE:            3 Years
