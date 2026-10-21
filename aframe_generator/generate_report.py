@@ -1016,40 +1016,54 @@ def main():
 
     # -- Deflection L: look up member length from STAAD geometry -----------------
     members_dict = structural.get('members', {})
+    # Primary auto-computed source (STAAD "MEMBER SECTION DISPLACEMENTS" / the
+    # GUI's "Max Displacement" tool, SLS-filtered, local chord-relative resultant
+    # -- see _parse_section_displacements). Empty when a project has no section-
+    # displacement output, in which case MAX_VERT_MEMBER/MAX_HORIZ_MEMBER and the
+    # MAX_VERT_DISP_MM/MAX_HORIZ_DISP_MM project_info.txt overrides behave exactly
+    # as before.
+    sd = structural.get('section_displacements', {})
 
-    def _member_length_mm(member_key, fallback_mm):
+    def _member_length_mm(member_key, auto_member, fallback_mm):
         try:
             mid = int(project.get(member_key, 0) or 0)
             if mid and mid in members_dict:
                 return members_dict[mid]['length_mm']
         except (ValueError, TypeError):
             pass
+        if auto_member and auto_member in members_dict:
+            return members_dict[auto_member]['length_mm']
         return fallback_mm
 
-    vert_span_mm  = _member_length_mm('MAX_VERT_MEMBER',  geom['width'] * 1000)
-    horiz_span_mm = _member_length_mm('MAX_HORIZ_MEMBER', geom['depth'] * 1000)
+    vert_span_mm  = _member_length_mm('MAX_VERT_MEMBER',  sd.get('max_vertical_member'),
+                                       geom['width'] * 1000)
+    horiz_span_mm = _member_length_mm('MAX_HORIZ_MEMBER', sd.get('max_horizontal_member'),
+                                       geom['depth'] * 1000)
     vert_allow    = round(vert_span_mm  / 100, 1)
     horiz_allow   = round(horiz_span_mm / 200, 1)
 
     # Member details for report display
-    def _member_info(member_key):
+    def _member_info(member_key, auto_member=None):
         try:
             mid = int(project.get(member_key, 0) or 0)
             if mid and mid in members_dict:
                 return {'id': mid, 'length_mm': members_dict[mid]['length_mm']}
         except:
             pass
+        if auto_member and auto_member in members_dict:
+            return {'id': auto_member, 'length_mm': members_dict[auto_member]['length_mm']}
         return None
 
-    vert_member_info  = _member_info('MAX_VERT_MEMBER')
-    horiz_member_info = _member_info('MAX_HORIZ_MEMBER')
+    vert_member_info  = _member_info('MAX_VERT_MEMBER',  sd.get('max_vertical_member'))
+    horiz_member_info = _member_info('MAX_HORIZ_MEMBER', sd.get('max_horizontal_member'))
 
     total_horiz_x = round(wl['total_x'] + ld['impact_fx'], 3)
     total_horiz_z = round(wl['total_z'] + ld['impact_fz'], 3)
 
     # -- Ties: cover page shows a Total Horizontal Load (FX/FZ) block only when the
-    # A-frame is actually tied to a parent structure. A-frame is never a hanging type,
-    # so there is no FY / suspension-tie concept here.
+    # A-frame is actually tied to a parent structure. An A-frame is never a hanging type,
+    # so there is no FY / suspension-tie concept here — but see show_base_fy below for
+    # the ordinary ground-standing base-plate vertical reaction.
     has_ties = bool(structural.get('supports', {}).get('tie_nodes'))
     has_wind = bool(wl.get('has_wind'))
     show_tie_reactions = _bool_setting(project.get('SHOW_TIE_REACTIONS'), False)
@@ -1094,6 +1108,20 @@ def main():
         tie_sum_fx = _optional_float(project.get('TIE_FORCE_FX'))
     if _optional_float(project.get('TIE_FORCE_FZ')) is not None:
         tie_sum_fz = _optional_float(project.get('TIE_FORCE_FZ'))
+
+    # Total Vertical Load (FY): an A-frame is never a hanging/suspension type, but its
+    # ordinary ground-standing base plates ("FIXED BUT MX MY MZ") still carry a vertical
+    # reaction. Nearly every project has these, so this is shown only when explicitly
+    # requested (unlike FX/FZ, which only appear when the model actually has ties).
+    show_base_fy = _bool_setting(project.get('SHOW_BASE_FY'), False)
+    tie_sum_fy = None
+    if show_base_fy:
+        gov_fy_base_uls = sr.get('net_fy_at_base', {}).get('governing_fy', {}).get('ULS')
+        if gov_fy_base_uls:
+            tie_sum_fy = gov_fy_base_uls['total_y']
+    tie_fy_from_out = _optional_float(project.get('TIE_FORCE_FY')) is None
+    if _optional_float(project.get('TIE_FORCE_FY')) is not None:
+        tie_sum_fy = _optional_float(project.get('TIE_FORCE_FY'))
 
     # -- Connection stability: max axial in HORIZONTAL members only (coupler slipping) --
     nodes_coord = structural.get('geometry', {}).get('nodes', {})
@@ -1227,10 +1255,28 @@ def main():
         except: return fallback
 
     d = structural['displacements']
-    max_vert_mm   = _float(project.get('MAX_VERT_DISP_MM'),  d['max_vertical_mm'])
-    max_vert_lc   = project.get('MAX_VERT_DISP_LC',  '')  or str(d['max_vertical_lc'])
-    max_horiz_mm  = _float(project.get('MAX_HORIZ_DISP_MM'), d['max_horizontal_mm'])
-    max_horiz_lc  = project.get('MAX_HORIZ_DISP_LC', '')  or str(d['max_horizontal_lc'])
+    auto_vert_mm   = sd.get('max_vertical_mm')   if sd.get('max_vertical_lc')   else d['max_vertical_mm']
+    auto_vert_lc   = sd.get('max_vertical_lc')   if sd.get('max_vertical_lc')   else d['max_vertical_lc']
+    auto_horiz_mm  = sd.get('max_horizontal_mm') if sd.get('max_horizontal_lc') else d['max_horizontal_mm']
+    auto_horiz_lc  = sd.get('max_horizontal_lc') if sd.get('max_horizontal_lc') else d['max_horizontal_lc']
+    max_vert_mm   = _float(project.get('MAX_VERT_DISP_MM'),  auto_vert_mm)
+    max_vert_lc   = project.get('MAX_VERT_DISP_LC',  '')  or str(auto_vert_lc)
+    max_horiz_mm  = _float(project.get('MAX_HORIZ_DISP_MM'), auto_horiz_mm)
+    max_horiz_lc  = project.get('MAX_HORIZ_DISP_LC', '')  or str(auto_horiz_lc)
+
+    # Top-15 member lists for the deflection tables (mirrors the Member Axial Force
+    # Summary's top-30 list). Auto from the section-displacement scan; a manual
+    # MAX_VERT_DISP_MM/MAX_HORIZ_DISP_MM override collapses this to its single row.
+    if _optional_float(project.get('MAX_VERT_DISP_MM')) is not None:
+        top_vert_members = [{'member': vert_member_info['id'] if vert_member_info else '',
+                              'lc': max_vert_lc, 'mm': max_vert_mm}]
+    else:
+        top_vert_members = sd.get('vert_rows', [])[:15]
+    if _optional_float(project.get('MAX_HORIZ_DISP_MM')) is not None:
+        top_horiz_members = [{'member': horiz_member_info['id'] if horiz_member_info else '',
+                               'lc': max_horiz_lc, 'mm': max_horiz_mm}]
+    else:
+        top_horiz_members = sd.get('horiz_rows', [])[:15]
 
     install_notes = make_install_notes(structural)
     date_gen = datetime.now().strftime('%d-%b-%Y')
@@ -1268,8 +1314,11 @@ def main():
         show_tie_reactions = show_tie_reactions,
         tie_sum_fx        = tie_sum_fx,
         tie_sum_fz        = tie_sum_fz,
+        tie_sum_fy        = tie_sum_fy,
         tie_fx_from_out   = tie_fx_from_out,
         tie_fz_from_out   = tie_fz_from_out,
+        tie_fy_from_out   = tie_fy_from_out,
+        show_base_fy      = show_base_fy,
         install_notes = install_notes,
         date_gen      = date_gen,
         max_axial        = max_axial,
@@ -1282,6 +1331,8 @@ def main():
         max_vert_lc      = max_vert_lc,
         max_horiz_mm     = max_horiz_mm,
         max_horiz_lc     = max_horiz_lc,
+        top_vert_members  = top_vert_members,
+        top_horiz_members = top_horiz_members,
         vert_span_mm      = vert_span_mm,
         vert_member_info  = vert_member_info,
         horiz_span_mm     = horiz_span_mm,

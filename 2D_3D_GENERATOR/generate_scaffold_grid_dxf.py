@@ -637,6 +637,175 @@ def title_block_text(canvas, centre_x, base_y, lines):
         canvas.text(text, (centre_x, y), TH_SM, layer="DIMENSION", color=PIPE_COLOR, align="center")
 
 
+# ── radial / circular plan (e.g. a scaffold tower built around a tank) ─────────
+def detect_radial_rings(joints, min_ring_nodes=5, radius_tol_frac=0.06):
+    """If the plan layout (X-Z) is radial/circular - concentric rings of evenly
+    spaced nodes around a shared centre - return {'center', 'rings', 'bay_count',
+    'bay_angle_deg'}; otherwise None, so the ordinary lettered/numbered gridline
+    plan is used unchanged. See generate_scaffold_dxf.py's detect_radial_rings for
+    the full explanation of the detection method (geometry only - this module has
+    no load-case data to key off)."""
+    plan = sorted({(round(p[0], 3), round(p[2], 3)) for p in joints.values()})
+    if len(plan) < min_ring_nodes:
+        return None
+
+    cx = sum(p[0] for p in plan) / len(plan)
+    cz = sum(p[1] for p in plan) / len(plan)
+    with_r = sorted((math.hypot(x - cx, z - cz), x, z) for x, z in plan)
+
+    bands = []
+    for r, x, z in with_r:
+        if bands and r - bands[-1][-1][0] < 0.1:
+            bands[-1].append((r, x, z))
+        else:
+            bands.append([(r, x, z)])
+
+    rings = []
+    for band in bands:
+        if len(band) < min_ring_nodes:
+            continue
+        avg_r = sum(b[0] for b in band) / len(band)
+        if avg_r < 0.2:
+            continue
+        if max(abs(b[0] - avg_r) for b in band) > radius_tol_frac * max(avg_r, 1.0):
+            continue
+        rings.append({'radius': avg_r, 'points': [(b[1], b[2]) for b in band]})
+
+    if not rings:
+        return None
+    bay_count = max(len(r['points']) for r in rings)
+    if bay_count < min_ring_nodes:
+        return None
+
+    return {
+        'center': (cx, cz),
+        'rings': sorted(rings, key=lambda r: r['radius']),
+        'bay_count': bay_count,
+        'bay_angle_deg': 360.0 / bay_count,
+    }
+
+
+def dim_radius(canvas, center, point, text=None, text_height=0.11, layer="DIMENSION"):
+    cx, cy = center
+    px, py = point
+    angle = math.atan2(py - cy, px - cx)
+    canvas.line(center, point, layer=layer, color=DIM_COLOR)
+    arrow(canvas, point, angle)
+    label = text if text is not None else f"R{fmt_mm(math.hypot(px - cx, py - cy))}"
+    mid = ((cx + px) / 2.0, (cy + py) / 2.0)
+    perp = angle + math.pi / 2
+    off = text_height * 0.9
+    label_pt = (mid[0] + off * math.cos(perp), mid[1] + off * math.sin(perp))
+    deg = math.degrees(angle)
+    if deg > 90 or deg < -90:
+        deg += 180  # keep the label text upright/readable
+    canvas.text(label, label_pt, text_height, rotation=deg, layer=layer, color=DIM_COLOR, align="center")
+
+
+def dim_between(canvas, p0, p1, offset, text=None, text_height=0.11, layer="DIMENSION"):
+    """Linear dimension between two arbitrary (not necessarily axis-aligned) points -
+    see generate_scaffold_dxf.py's dim_between for the full explanation. `offset` is
+    a signed perpendicular distance from p0-p1; its sign picks which side the
+    dimension line is drawn on."""
+    dx, dz = p1[0] - p0[0], p1[1] - p0[1]
+    length = math.hypot(dx, dz)
+    if length < 1e-6:
+        return
+    ux, uz = dx / length, dz / length
+    nx, nz = -uz, ux
+    p0e = (p0[0] + nx * offset, p0[1] + nz * offset)
+    p1e = (p1[0] + nx * offset, p1[1] + nz * offset)
+    sign = math.copysign(1, offset)
+    canvas.line((p0[0] + nx * GAP * sign, p0[1] + nz * GAP * sign), p0e, layer=layer, color=DIM_COLOR)
+    canvas.line((p1[0] + nx * GAP * sign, p1[1] + nz * GAP * sign), p1e, layer=layer, color=DIM_COLOR)
+    canvas.line(p0e, p1e, layer=layer, color=DIM_COLOR)
+    angle = math.atan2(uz, ux)
+    arrow(canvas, p0e, angle + math.pi)
+    arrow(canvas, p1e, angle)
+    label = text if text is not None else fmt_mm(length)
+    mid = ((p0e[0] + p1e[0]) / 2.0, (p0e[1] + p1e[1]) / 2.0)
+    off2 = text_height * 0.9 * sign
+    label_pt = (mid[0] + nx * off2, mid[1] + nz * off2)
+    deg = math.degrees(angle)
+    if deg > 90 or deg < -90:
+        deg += 180
+    canvas.text(label, label_pt, text_height, rotation=deg, layer=layer, color=DIM_COLOR, align="center")
+
+
+def _radial_member_samples(radial):
+    """One representative ledger (circumferential member) and one representative
+    transom (radial member) to dimension - "one each" is enough since every bay is
+    identical by symmetry."""
+    cx, cz = radial['center']
+
+    def by_angle(ring):
+        return sorted(ring['points'], key=lambda p: math.atan2(p[1] - cz, p[0] - cx))
+
+    rings = radial['rings']
+    inner_sorted = by_angle(rings[0])
+    ledger = (inner_sorted[0], inner_sorted[1]) if len(inner_sorted) >= 2 else None
+
+    transom = None
+    if len(rings) >= 2:
+        outer_sorted = by_angle(rings[1])
+        p_in = inner_sorted[0]
+        in_angle = math.atan2(p_in[1] - cz, p_in[0] - cx)
+        p_out = min(
+            outer_sorted,
+            key=lambda p: abs(((math.atan2(p[1] - cz, p[0] - cx) - in_angle + math.pi) % (2 * math.pi)) - math.pi),
+        )
+        transom = (p_in, p_out)
+
+    return ledger, transom
+
+
+def draw_radial_plan(canvas, joints, members, radial, level_refs, ox, oz, tol=0.003):
+    y_level = level_refs[0][1]
+    for _, (a, b) in members.items():
+        ya, yb = joints[a][1], joints[b][1]
+        if abs(ya - y_level) < tol and abs(yb - y_level) < tol:
+            canvas.line((ox + joints[a][0], oz + joints[a][2]),
+                        (ox + joints[b][0], oz + joints[b][2]), layer="PIPES", color=PIPE_COLOR)
+
+    cx, cz = radial['center']
+    ccx, ccz = ox + cx, oz + cz
+    canvas.circle((ccx, ccz), 0.05, layer="DIMENSION", color=DIM_COLOR)
+    canvas.text("C/L", (ccx, ccz - 0.18), TH_SM, layer="DIMENSION", color=DIM_COLOR, align="center")
+
+    # One radius leader per ring, fanned out at different angles so the labels
+    # don't overlap when rings sit close together.
+    base_angle = math.radians(100)
+    step = math.radians(18)
+    for i, ring in enumerate(radial['rings']):
+        angle = base_angle + i * step
+        point = (ccx + ring['radius'] * math.cos(angle), ccz + ring['radius'] * math.sin(angle))
+        dim_radius(canvas, (ccx, ccz), point)
+
+    ledger, transom = _radial_member_samples(radial)
+    if ledger:
+        p0 = (ox + ledger[0][0], oz + ledger[0][1])
+        p1 = (ox + ledger[1][0], oz + ledger[1][1])
+        mid = ((p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0)
+        outward = 1 if math.hypot(mid[0] - ccx, mid[1] - ccz) >= radial['rings'][0]['radius'] else -1
+        dim_between(canvas, p0, p1, 0.2 * outward)
+    if transom:
+        p0 = (ox + transom[0][0], oz + transom[0][1])
+        p1 = (ox + transom[1][0], oz + transom[1][1])
+        dim_between(canvas, p0, p1, -0.2)
+
+    outer = radial['rings'][-1]['radius']
+    title_block_text(
+        canvas,
+        ccx,
+        ccz - outer - 0.45,
+        [
+            "PLAN VIEW TYPICAL FOR",
+            format_level_refs(level_refs),
+            f"{radial['bay_count']} No. BAYS @ {radial['bay_angle_deg']:.2f} DEG c/c  -  DIA {fmt_mm(2 * outer)}",
+        ],
+    )
+
+
 # ── plan view at one level ────────────────────────────────────────────────────
 def draw_plan(canvas, joints, members, xs, zs, level_refs, ox, oz, tol=0.003):
     xmin,xmax = xs[0],xs[-1]
@@ -726,6 +895,64 @@ def draw_elevation(canvas, joints, members, h_axis, h_vals, h_labels, y_levels, 
 
 
 # ── isometric ─────────────────────────────────────────────────────────────────
+# A radial/circular plan (see detect_radial_rings) has no real gridline columns -
+# at a fixed X (or Z), there is at most one or two nodes anywhere near it, so a
+# per-gridline elevation panel comes out almost empty with its bubble labels all
+# but overlapping (nothing in a radial layout is evenly spaced along a straight
+# axis the way real rectangular gridlines are). Draw one combined elevation
+# instead - same convention as the standard format - with the same "lie the tower
+# on its side" rule for a tall structure, so levels get enough room to stay
+# legible once printed.
+TALL_ELEVATION_HEIGHT = 10.0
+
+
+def draw_radial_elevation(canvas, joints, members, h_axis, y_levels, view_name, ox=0.0, oy=0.0, tol=0.003):
+    y_levels = sorted(y_levels)
+    ymin, ymax = y_levels[0], y_levels[-1]
+    h_vals_all = [p[h_axis] for p in joints.values()]
+    hmin, hmax = min(h_vals_all), max(h_vals_all)
+    lie_down = (ymax - ymin) > TALL_ELEVATION_HEIGHT
+
+    done = set()
+    for _, (a, b) in members.items():
+        pa, pb = joints[a], joints[b]
+        if lie_down:
+            p0, p1 = (pa[1], pa[h_axis]), (pb[1], pb[h_axis])
+        else:
+            p0, p1 = (pa[h_axis], pa[1]), (pb[h_axis], pb[1])
+        if abs(p0[0] - p1[0]) < tol and abs(p0[1] - p1[1]) < tol:
+            continue
+        key = line_key(p0, p1, precision=4)
+        if key in done:
+            continue
+        done.add(key)
+        canvas.line((ox + p0[0], oy + p0[1]), (ox + p1[0], oy + p1[1]), layer="PIPES", color=PIPE_COLOR)
+
+    if lie_down:
+        # Height now runs along canvas-X (plenty of room across the sheet), width
+        # along canvas-Y.
+        dh_y = oy + hmin - 0.38
+        for i in range(len(y_levels) - 1):
+            dim_h(canvas, ox + y_levels[i], ox + y_levels[i + 1], dh_y, oy + hmin)
+        dv_x = ox + ymin - 0.70
+        dim_v(canvas, oy + hmin, oy + hmax, dv_x, ox + ymin)
+        centre_x = ox + (ymin + ymax) / 2.0
+        base_y_text = oy + hmin - 0.75
+    else:
+        dh_y = oy + ymax + 0.18
+        dim_h(canvas, ox + hmin, ox + hmax, dh_y, oy + ymax)
+        dv_x = ox + hmin - 0.34
+        for i in range(len(y_levels) - 1):
+            dim_v(canvas, oy + y_levels[i], oy + y_levels[i + 1], dv_x, ox + ymin)
+        centre_x = ox + (hmin + hmax) / 2.0
+        base_y_text = oy + ymin - 0.56
+
+    title_block_text(
+        canvas, centre_x, base_y_text,
+        [f"{view_name} VIEW - RADIAL SCAFFOLD", "(see plan view for radius / bay dimensions)"],
+    )
+
+
 def draw_gridline_elevation(
     canvas,
     joints,
@@ -907,11 +1134,15 @@ def make_plans(joints, members, xs, zs, y_levels, outdir):
     cell_w = xspan + 1.25
     cell_h = zspan + 1.45
     groups = grouped_plan_levels(joints, members, y_levels)
+    radial = detect_radial_rings(joints)
     # all plan levels in one horizontal row for better visibility
     for k, group in enumerate(groups):
         ox = k * (cell_w + 0.60)
         oz = 0.0
-        draw_plan(canvas, joints, members, xs, zs, group["levels"], ox, oz)
+        if radial:
+            draw_radial_plan(canvas, joints, members, radial, group["levels"], ox, oz)
+        else:
+            draw_plan(canvas, joints, members, xs, zs, group["levels"], ox, oz)
     path = outdir / "scaffold_grid_plans.dxf"
     save_dxf(canvas, path)
     return {"dxf_path": path, "canvas": canvas, "title": "Plan View", "suffix": "PLAN-VIEW"}
@@ -919,20 +1150,22 @@ def make_plans(joints, members, xs, zs, y_levels, outdir):
 
 def make_front(joints, members, xs, y_levels, outdir):
     canvas = Canvas()
-    zs = major_grid_vals(joints, members, 2)
-    x_labels = [col_label(i) for i in range(len(xs))]
-    z_labels = [row_label(i) for i in range(len(zs))]
-    groups = grouped_gridline_views(joints, members, 0, xs, 2, x_labels)
-    width = zs[-1] - zs[0] + 1.1
-    height = y_levels[-1] - y_levels[0] + 1.35
-    # all grid-line groups in one horizontal row
-    for k, group in enumerate(groups):
-        ox = k * (width + 1.0)
-        oy = 0.0
-        draw_gridline_group(
-            canvas, joints, members, group, 0, 2, zs, z_labels, y_levels,
-            "FRONT", grid_range_label(z_labels), ox, oy,
-        )
+    if detect_radial_rings(joints):
+        draw_radial_elevation(canvas, joints, members, 0, y_levels, "FRONT")
+    else:
+        zs = major_grid_vals(joints, members, 2)
+        x_labels = [col_label(i) for i in range(len(xs))]
+        z_labels = [row_label(i) for i in range(len(zs))]
+        groups = grouped_gridline_views(joints, members, 0, xs, 2, x_labels)
+        width = zs[-1] - zs[0] + 1.1
+        # all grid-line groups in one horizontal row
+        for k, group in enumerate(groups):
+            ox = k * (width + 1.0)
+            oy = 0.0
+            draw_gridline_group(
+                canvas, joints, members, group, 0, 2, zs, z_labels, y_levels,
+                "FRONT", grid_range_label(z_labels), ox, oy,
+            )
     path = outdir / "scaffold_grid_front.dxf"
     save_dxf(canvas, path)
     return {"dxf_path": path, "canvas": canvas, "title": "Front View", "suffix": "FRONT-VIEW"}
@@ -940,20 +1173,22 @@ def make_front(joints, members, xs, y_levels, outdir):
 
 def make_side(joints, members, zs, y_levels, outdir):
     canvas = Canvas()
-    xs = major_grid_vals(joints, members, 0)
-    x_labels = [col_label(i) for i in range(len(xs))]
-    z_labels = [row_label(i) for i in range(len(zs))]
-    groups = grouped_gridline_views(joints, members, 2, zs, 0, z_labels)
-    width = xs[-1] - xs[0] + 1.1
-    height = y_levels[-1] - y_levels[0] + 1.35
-    # all grid-line groups in one horizontal row
-    for k, group in enumerate(groups):
-        ox = k * (width + 1.0)
-        oy = 0.0
-        draw_gridline_group(
-            canvas, joints, members, group, 2, 0, xs, x_labels, y_levels,
-            "SIDE", grid_range_label(x_labels), ox, oy,
-        )
+    if detect_radial_rings(joints):
+        draw_radial_elevation(canvas, joints, members, 2, y_levels, "SIDE")
+    else:
+        xs = major_grid_vals(joints, members, 0)
+        x_labels = [col_label(i) for i in range(len(xs))]
+        z_labels = [row_label(i) for i in range(len(zs))]
+        groups = grouped_gridline_views(joints, members, 2, zs, 0, z_labels)
+        width = xs[-1] - xs[0] + 1.1
+        # all grid-line groups in one horizontal row
+        for k, group in enumerate(groups):
+            ox = k * (width + 1.0)
+            oy = 0.0
+            draw_gridline_group(
+                canvas, joints, members, group, 2, 0, xs, x_labels, y_levels,
+                "SIDE", grid_range_label(x_labels), ox, oy,
+            )
     path = outdir / "scaffold_grid_side.dxf"
     save_dxf(canvas, path)
     return {"dxf_path": path, "canvas": canvas, "title": "Side View", "suffix": "SIDE-VIEW"}

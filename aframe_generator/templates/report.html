@@ -251,6 +251,15 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   </div>
   {% endif %}
 
+  {% if show_base_fy and tie_sum_fy is not none %}
+  {# ── Total vertical reaction at ground-standing base plates ── #}
+  <div style="margin-top:6px; padding:5px 12px 6px; background:var(--bg-hdr); border-left:4px solid var(--gold);">
+    <div style="font-size:10pt; font-weight:bold; color:var(--navy);">
+      Total Vertical Load in the Y Direction (F<sub>Y</sub>): {{ tie_sum_fy }} kN{% if tie_fy_from_out %} <span class="src-tag">(Extracted from the STAAD output file)</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if project.NOTE %}
   <div class="cover-note" style="font-size:{{ cover_callout_font_pt }}pt;"><strong>NOTE:</strong> {{ project.NOTE }}</div>
   {% endif %}
@@ -531,19 +540,19 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 <div class="sub-hdr" style="margin-top:8mm;">Load Diagrams</div>
 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
   {% for d in load_diagrams %}
-  <div style="flex:1; min-width:140px;">
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
     {% if d.image %}<img src="{{ d.image }}" class="app-img" style="max-height:180px;"/>
     {% else %}<div class="img-box" style="min-height:140px;"><strong>{{ d.name }}</strong><small>{{ d.file }}</small></div>{% endif %}
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">{{ d.caption }}</div>
   </div>
   {% endfor %}
   {% if has_wind %}
-  <div style="flex:1; min-width:140px;">
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
     {% if images['load_wind_x'] %}<img src="{{ images['load_wind_x'] }}" class="app-img" style="max-height:180px;"/>
     {% else %}<div class="img-box" style="min-height:140px;"><strong>Wind Load X</strong><small>load_wind_x.png</small></div>{% endif %}
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Wind Load X (WLX)</div>
   </div>
-  <div style="flex:1; min-width:140px;">
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
     {% if images['load_wind_z'] %}<img src="{{ images['load_wind_z'] }}" class="app-img" style="max-height:180px;"/>
     {% else %}<div class="img-box" style="min-height:140px;"><strong>Wind Load Z</strong><small>load_wind_z.png</small></div>{% endif %}
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Wind Load Z (WLZ)</div>
@@ -811,6 +820,27 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </tr>
   </tbody>
 </table>
+{% if top_vert_members %}
+<div class="sub-hdr" style="margin-top:8px; font-size:8.5pt;">Vertical Displacement Summary (Top {{ [top_vert_members|length, 15]|min }} Members) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
+<table style="font-size:8pt; margin-bottom:6px;">
+  <thead>
+    <tr>
+      <th style="width:33%;">Member</th>
+      <th style="width:33%;">L/C</th>
+      <th style="width:34%; background:var(--gold); color:var(--navy);">Local Displacement (mm)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in top_vert_members %}
+    <tr>
+      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
+      <td style="text-align:center;">{{ m.lc }}</td>
+      <td style="text-align:center; font-weight:bold; {% if m.mm == max_vert_mm %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.mm) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% if images['deflection_vertical_table'] %}
 <div style="margin-top:6px; break-inside:avoid; page-break-inside:avoid;">
   <div class="sub-hdr" style="font-size:8.5pt;">Vertical Displacement Table (SLS Combinations)</div>
@@ -850,6 +880,27 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </tr>
   </tbody>
 </table>
+{% if top_horiz_members %}
+<div class="sub-hdr" style="margin-top:8px; font-size:8.5pt;">Horizontal Displacement Summary (Top {{ [top_horiz_members|length, 15]|min }} Members) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
+<table style="font-size:8pt; margin-bottom:6px;">
+  <thead>
+    <tr>
+      <th style="width:33%;">Member</th>
+      <th style="width:33%;">L/C</th>
+      <th style="width:34%; background:var(--gold); color:var(--navy);">Local Displacement (mm)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in top_horiz_members %}
+    <tr>
+      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
+      <td style="text-align:center;">{{ m.lc }}</td>
+      <td style="text-align:center; font-weight:bold; {% if m.mm == max_horiz_mm %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.mm) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% if images['deflection_horizontal_table'] %}
 <div style="margin-top:6px; break-inside:avoid; page-break-inside:avoid;">
   <div class="sub-hdr" style="font-size:8.5pt;">Horizontal Displacement Table (SLS Combinations)</div>

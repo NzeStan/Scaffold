@@ -25,7 +25,10 @@ class StaadParser:
         combos        = self._parse_load_combinations(std)
         members       = self._parse_member_incidences(std, geom['nodes'])
         ladder_beams  = self._parse_ladder_beams(geom, members, load_cases)
-        support_reactions = self._parse_support_reactions(out, supports.get('tie_nodes', []), load_cases, combos, supports.get('fixed_nodes', []))
+        support_reactions = self._parse_support_reactions(
+            out, supports.get('tie_nodes', []), load_cases, combos,
+            supports.get('fixed_nodes', []), supports.get('base_nodes', []),
+        )
 
         # Wind: identify wind load case numbers from .std, then look them up in .out
         wind_lcs = self._extract_wind_load_cases(std)
@@ -35,6 +38,7 @@ class StaadParser:
         code_chk = self._parse_code_check(out)
         member_forces = self._parse_member_forces(out)
         displ    = self._parse_displacements(out, combos)
+        section_displ = self._parse_section_displacements(out, members, geom['nodes'], combos)
 
         # Frictional resistance back-calculated from KFX in SUPPORTS line:
         #   Resistance = KFX
@@ -63,6 +67,7 @@ class StaadParser:
             'code_check':            code_chk,
             'member_forces':         member_forces,
             'displacements':         displ,
+            'section_displacements': section_displ,
             'load_combinations':     combos,
             'support_reactions':      support_reactions,
             'frictional_resistance': fric,
@@ -470,11 +475,12 @@ class StaadParser:
         result['total_z'] = round(result['total_z'], 3)
         return result
 
-    def _parse_support_reactions(self, out, tie_nodes=None, load_cases=None, load_combinations=None, fixed_nodes=None):
+    def _parse_support_reactions(self, out, tie_nodes=None, load_cases=None, load_combinations=None, fixed_nodes=None, base_nodes=None):
         tie_nodes   = set(tie_nodes   or [])
         fixed_nodes = set(fixed_nodes or [])
+        base_nodes  = set(base_nodes  or [])
         _no_governing = {'ULS': None, 'SLS': None}
-        if not tie_nodes and not fixed_nodes:
+        if not tie_nodes and not fixed_nodes and not base_nodes:
             return {
                 'tie_joints': [],
                 'net_global': {
@@ -486,6 +492,7 @@ class StaadParser:
                     'governing_fz': dict(_no_governing),
                 },
                 'net_fy_at_fixed': {'fixed_joints': [], 'rows': [], 'governing_fy': dict(_no_governing)},
+                'net_fy_at_base': {'base_joints': [], 'rows': [], 'governing_fy': dict(_no_governing)},
             }
 
         titles = {}
@@ -507,7 +514,8 @@ class StaadParser:
         )
 
         by_load = {}
-        by_load_fy = {}  # FY accumulation at fully-FIXED nodes
+        by_load_fy = {}       # FY accumulation at fully-FIXED nodes (hanging scaffolds)
+        by_load_fy_base = {}  # FY accumulation at FIXED BUT MX MY MZ base supports
         current_joint = None
         in_reactions = False
         for raw in out.splitlines():
@@ -552,6 +560,17 @@ class StaadParser:
                 })
                 fy_item['ry_net'] += fy
 
+            # --- FY accumulation at FIXED BUT MX MY MZ base supports (the normal
+            # ground-standing base plate pattern, rigid vertically) ---
+            if current_joint in base_nodes:
+                fy_b = float(m.group(4))
+                fy_b_item = by_load_fy_base.setdefault(load_no, {
+                    'load_case': load_no,
+                    'title': titles.get(load_no, f'LC {load_no}'),
+                    'ry_net': 0.0,
+                })
+                fy_b_item['ry_net'] += fy_b
+
             if current_joint not in tie_nodes:
                 continue
             fx = float(m.group(3))
@@ -588,6 +607,14 @@ class StaadParser:
             }
             for item in sorted(by_load_fy.values(), key=lambda x: x['load_case'])
         ]
+        fy_rows_base = [
+            {
+                'load_case': item['load_case'],
+                'title': item['title'],
+                'total_y': round(item['ry_net'], 3),
+            }
+            for item in sorted(by_load_fy_base.values(), key=lambda x: x['load_case'])
+        ]
 
         # FX, FZ and FY are each governed independently - the load combination
         # that produces the largest |FX| need not be the same one that produces
@@ -619,6 +646,11 @@ class StaadParser:
                 'fixed_joints': sorted(fixed_nodes),
                 'rows': fy_rows,
                 'governing_fy': _governing_by_basis(fy_rows, 'total_y'),
+            },
+            'net_fy_at_base': {
+                'base_joints': sorted(base_nodes),
+                'rows': fy_rows_base,
+                'governing_fy': _governing_by_basis(fy_rows_base, 'total_y'),
             },
         }
 
@@ -944,6 +976,164 @@ class StaadParser:
             'max_horizontal_lc':  max_horiz_lc or 4,
             'max_horizontal_node': max_horiz_node,
             'sls_source':         sls_source,
+        }
+
+    def _parse_section_displacements(self, out, members, nodes, load_combinations=None):
+        """
+        Parse MEMBER SECTION DISPLACEMENTS (from a "PRINT SECTION DISPLACEMENTS"
+        command) -- per-member, per-load-case displacement at 13 points (1/12th
+        increments) along the member, in GLOBAL X,Y,Z (units: CM).
+
+        Mirrors the manual STAAD GUI workflow the deflection check is based on:
+        beams parallel to global X/Z (ledgers/transoms) are checked for VERTICAL
+        deflection; beams parallel to global Y (standards) are checked for
+        HORIZONTAL deflection -- both filtered to SLS (unfactored, factor == 1.0)
+        combinations only. Diagonal braces (aligned with neither axis) are
+        excluded, same as the manual member-by-orientation selection.
+
+        The value compared at each point is the LOCAL (chord-relative) resultant
+        displacement -- the global displacement at that point minus the straight
+        -line interpolation between the member's own two end-point displacements
+        -- not the raw global value. This is what STAAD's own "MAX LOCAL DISP"
+        per-member summary line reports (verified against the scafold_generator
+        project's output to within rounding), and is the quantity the GUI's "Max
+        Displacement" tool shows: a member's own sag/sway, with the overall
+        structure's rigid sway and settlement removed. Raw global displacement
+        conflates every member at a given level with the structure's overall
+        settlement, giving near-identical values regardless of a member's own
+        bending, so it was rejected.
+
+        STAAD's run-length table convention re-prints BOTH the member and load
+        number only when a new member's block starts; otherwise it blanks out
+        whichever of the two is unchanged from the previous row (almost always
+        the member, since the inner loop is over load cases).
+        """
+        m = re.search(
+            r'MEMBER SECTION DISPLACEMENTS.*?(?=\n\s*\*+\s*END OF SECT DISPL RESULTS)',
+            out, re.DOTALL
+        )
+        if not m:
+            return {}
+        block = m.group(0)
+
+        sls_lcs = set()
+        if load_combinations:
+            for c in load_combinations:
+                if all(abs(f - 1.0) < 0.01 for _, f in c['factors']):
+                    sls_lcs.add(c['number'])
+        if not sls_lcs:
+            return {}
+
+        # Classify members by orientation (tolerance: within ~3 degrees of the axis).
+        axis = {}
+        for mid, minfo in members.items():
+            j1, j2 = minfo.get('j1'), minfo.get('j2')
+            if j1 not in nodes or j2 not in nodes:
+                continue
+            x1, y1, z1 = nodes[j1]
+            x2, y2, z2 = nodes[j2]
+            dx, dy, dz = abs(x2 - x1), abs(y2 - y1), abs(z2 - z1)
+            length = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if length <= 1e-6:
+                continue
+            if dy / length < 0.05:
+                axis[mid] = 'horizontal'
+            elif math.sqrt(dx * dx + dz * dz) / length < 0.05:
+                axis[mid] = 'vertical'
+            # else: diagonal brace -- excluded from both checks
+
+        # Best (across SLS cases) local displacement PER MEMBER -- not just the single
+        # overall governing member -- so the report can list the top N members, same as
+        # the Member Axial Force Summary.
+        best_vert  = {}   # {member: {'mm': float, 'lc': int}}
+        best_horiz = {}
+
+        cur_member = None
+        cur_load   = None
+        expect_new_member = True
+        vals = []
+
+        num_re = re.compile(r'-?\d+\.\d+')
+        lead_re = re.compile(r'^(\d+)(?:\s+(\d+))?\s+(-?[\d.].*)$')
+
+        def flush():
+            if cur_member is None or cur_load is None or len(vals) < 39:
+                return
+            if cur_load not in sls_lcs:
+                return
+            orient = axis.get(cur_member)
+            if orient is None:
+                return
+            pts = [vals[i:i + 3] for i in range(0, 39, 3)]
+            x0, y0, z0 = pts[0]
+            x12, y12, z12 = pts[12]
+            local_max = 0.0
+            for i, (x, y, z) in enumerate(pts):
+                t = i / 12.0
+                cx = x0 + t * (x12 - x0)
+                cy = y0 + t * (y12 - y0)
+                cz = z0 + t * (z12 - z0)
+                res = math.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2)
+                if res > local_max:
+                    local_max = res
+            local_max_mm = local_max * 10  # cm -> mm
+            bucket = best_vert if orient == 'horizontal' else best_horiz
+            prev = bucket.get(cur_member)
+            if prev is None or local_max_mm > prev['mm']:
+                bucket[cur_member] = {'mm': local_max_mm, 'lc': cur_load}
+
+        for line in block.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if s.startswith('MAX LOCAL'):
+                flush()
+                vals = []
+                cur_load = None
+                expect_new_member = True
+                continue
+            if s.startswith('MEMB') or s.startswith('----') or s.startswith('UNITS') \
+               or s.startswith('MEMBER SECTION') or s.startswith('STAAD SPACE'):
+                continue
+
+            lead = lead_re.match(s)
+            if lead:
+                flush()
+                vals = []
+                a, b, rest = lead.groups()
+                if expect_new_member:
+                    cur_member = int(a)
+                    cur_load = int(b) if b is not None else 1
+                    expect_new_member = False
+                else:
+                    cur_load = int(a)
+                vals.extend(float(x) for x in num_re.findall(rest))
+            else:
+                vals.extend(float(x) for x in num_re.findall(s))
+        flush()
+
+        if not best_vert and not best_horiz:
+            return {}
+
+        vert_rows = sorted(
+            ({'member': mid, 'mm': round(v['mm'], 3), 'lc': v['lc']} for mid, v in best_vert.items()),
+            key=lambda r: r['mm'], reverse=True,
+        )
+        horiz_rows = sorted(
+            ({'member': mid, 'mm': round(v['mm'], 3), 'lc': v['lc']} for mid, v in best_horiz.items()),
+            key=lambda r: r['mm'], reverse=True,
+        )
+
+        return {
+            'max_vertical_mm':      vert_rows[0]['mm']     if vert_rows  else None,
+            'max_vertical_lc':      vert_rows[0]['lc']     if vert_rows  else None,
+            'max_vertical_member':  vert_rows[0]['member'] if vert_rows  else None,
+            'max_horizontal_mm':    horiz_rows[0]['mm']     if horiz_rows else None,
+            'max_horizontal_lc':    horiz_rows[0]['lc']     if horiz_rows else None,
+            'max_horizontal_member': horiz_rows[0]['member'] if horiz_rows else None,
+            'vert_rows':             vert_rows,
+            'horiz_rows':            horiz_rows,
+            'sls_source':           'SLS combinations (STAAD section displacements)',
         }
 
     # member incidences + lengths

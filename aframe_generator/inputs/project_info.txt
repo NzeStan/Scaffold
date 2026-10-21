@@ -26,9 +26,15 @@ CATEGORY_1_ASSURANCE_NOTE: no
 # Set to "yes" to include the full tie-by-tie reaction table as a separate calc page.
 # Default is "no" (tie FX/FZ sums are still shown on the cover page).
 SHOW_TIE_REACTIONS: no
+# An A-frame is never a hanging/suspension type, so no Total Vertical Load (FY) is shown on
+# the cover page by default. Set this to "yes" to show the total vertical reaction summed
+# across the ordinary ground-standing base supports ("FIXED BUT MX MY MZ").
+SHOW_BASE_FY: no
 # Manual override for cover page tie forces (kN). Leave blank to use auto-calculated values.
+# TIE_FORCE_FY only displays when SHOW_BASE_FY is set above.
 TIE_FORCE_FX:
 TIE_FORCE_FZ:
+TIE_FORCE_FY:
 
 PERMIT_NO:
 ERMT_NO:             PIC/PMS/26/

@@ -479,6 +479,7 @@ def _platform_live_workings(project, structural):
         tw_display = entry.get("tributary_width_display")
         geom = entry.get("geometry") or {}
         y_mid = round(geom.get("y_mid", 0.0), 3) if geom else 0.0
+        axis = geom.get("axis") if geom else None
 
         if not tributary_width:
             if project_intensity:
@@ -502,17 +503,24 @@ def _platform_live_workings(project, structural):
             if tributary_width:
                 line_load = round(intensity * tributary_width, 3)
         role = entry.get("member_role") or "Loaded"
-        # Group purely by platform level / load case / role - members STAAD applies
-        # ONE uniform UDL to (e.g. "3493 TO 3523 UNI GY -1.829") must collapse into a
-        # single row, even when their individually-computed tributary widths differ
-        # by a millimetre or two (real, tiny bay-spacing noise in the STAAD geometry,
-        # not a different design condition). Keying on the exact width/intensity/load
-        # split one applied UDL into several near-duplicate rows. The governing
-        # (largest) tributary width found in the group is kept as the single,
-        # conservative representative value shown on that row.
-        key = (y_mid, entry.get("load_case"), entry.get("title") or "LL", role)
+        # Group purely by platform level / supporting-member axis / load case / role -
+        # members STAAD applies ONE uniform UDL to (e.g. "3493 TO 3523 UNI GY -1.829")
+        # must collapse into a single row, even when their individually-computed
+        # tributary widths differ by a millimetre or two (real, tiny bay-spacing noise
+        # in the STAAD geometry, not a different design condition). Keying on the exact
+        # width/intensity/load split one applied UDL into several near-duplicate rows.
+        # The governing (largest) tributary width found in the group is kept as the
+        # single, conservative representative value shown on that row.
+        #
+        # `axis` (X or Z — the direction the supporting member runs) is part of the key
+        # because two platforms at the SAME Y elevation but with differently-oriented
+        # decking (e.g. a main platform and an adjacent landing) must never merge their
+        # Edge/Interior rows together: without it, the smaller of the two platforms'
+        # values is silently dropped by the "keep the larger tributary width" rule below.
+        key = (y_mid, axis, entry.get("load_case"), entry.get("title") or "LL", role)
         candidate = {
             "y_mid": y_mid,
+            "axis": axis,
             "load_case": entry.get("load_case"),
             "title": entry.get("title") or "LL",
             "member_role": role,
@@ -599,16 +607,20 @@ def _platform_live_workings(project, structural):
             ),
         })
 
-    # Group rows into platforms by Y elevation
+    # Group rows into platforms by Y elevation AND supporting-member axis. Two platforms
+    # can sit at the identical Y elevation (e.g. a main platform and an adjacent landing)
+    # while their decking runs in different directions (X vs Z) -- that axis change is
+    # the signal that these are separate platforms, not one, so each gets its own table.
     platform_levels: dict = {}
     for row in all_rows:
         y = row.pop("y_mid", 0.0)
+        axis = row.pop("axis", None)
         y_key = round(float(y or 0.0), 2)
-        platform_levels.setdefault(y_key, []).append(row)
+        platform_levels.setdefault((y_key, axis), []).append(row)
 
     platforms = []
-    for y_key in sorted(platform_levels.keys()):
-        p_rows = platform_levels[y_key]
+    for y_key, axis in sorted(platform_levels.keys(), key=lambda k: (k[0], k[1] or "")):
+        p_rows = platform_levels[(y_key, axis)]
         p_intensity = max(r["load_intensity_kn_m2"] for r in p_rows)
         cls = _load_class_for_intensity(p_intensity)
         platforms.append({
@@ -621,7 +633,9 @@ def _platform_live_workings(project, structural):
 
     if len(platforms) > 1:
         for i, p in enumerate(platforms, 1):
-            p["platform_label"] = f"Platform {i}  —  Elev. {_format_number(p['elevation_m'])} m"
+            p["platform_label"] = f"Platform {i}"
+            if abs(p['elevation_m']) > 0.001:
+                p["platform_label"] += f"  —  Elev. {_format_number(p['elevation_m'])} m"
 
     # Collapse platforms with identical loading patterns into a single displayed table.
     # Signature = load intensity + sorted set of (role, trib_width, line_load) rows.
@@ -640,12 +654,234 @@ def _platform_live_workings(project, structural):
             p["skip"] = False
         else:
             representative = seen_sigs[sig]
-            label = p["platform_label"] or f"Elev. {_format_number(p['elevation_m'])} m"
+            if p["platform_label"]:
+                label = p["platform_label"]
+            elif abs(p['elevation_m']) > 0.001:
+                label = f"Elev. {_format_number(p['elevation_m'])} m"
+            else:
+                label = "the same platform"
             representative["also_applies_at"].append(label)
             p["skip"] = True
 
     swl = max((p["load_intensity_kn_m2"] for p in platforms), default=project_intensity or 0.0)
     return platforms, round(swl, 3)
+
+
+# -- Trapezoidal / triangular live load (radial / tapered platform bays) --------
+
+def _trap_ring_tributary_widths(node_ids, nodes):
+    """{node_id: {'tw', 'half_prev', 'half_next'}} for one ring of platform-bay nodes
+    (same radius, same elevation) - half the chord distance to each angularly-adjacent
+    node in the ring, on both sides. Same left-half + right-half convention as the
+    straight-bay tributary width elsewhere in this file (_assign_tributary_widths),
+    just applied around a ring instead of along a line; for a uniformly-spaced ring
+    both halves are equal, so this reduces to the ring's own node-to-node spacing."""
+    distinct = sorted(set(node_ids))
+    pts = {n: nodes.get(n) for n in distinct}
+    if len(distinct) < 3 or any(p is None for p in pts.values()):
+        return {n: {'tw': 0.0, 'half_prev': 0.0, 'half_next': 0.0} for n in node_ids}
+
+    cx = sum(p[0] for p in pts.values()) / len(pts)
+    cz = sum(p[2] for p in pts.values()) / len(pts)
+    ordered = sorted(distinct, key=lambda n: math.atan2(pts[n][2] - cz, pts[n][0] - cx))
+    count = len(ordered)
+
+    def chord(a, b):
+        return math.hypot(pts[a][0] - pts[b][0], pts[a][2] - pts[b][2])
+
+    widths = {}
+    for i, n in enumerate(ordered):
+        prev_n, next_n = ordered[i - 1], ordered[(i + 1) % count]
+        half_prev = round(chord(n, prev_n) / 2.0, 4)
+        half_next = round(chord(n, next_n) / 2.0, 4)
+        widths[n] = {'tw': round(half_prev + half_next, 4), 'half_prev': half_prev, 'half_next': half_next}
+    return widths
+
+
+def _trap_bay_svg(bay):
+    """Loading-diagram sketch for one trapezoidal/triangular platform bay: the member
+    baseline with its applied load profile drawn above it (tapering between the two
+    end values), each end labelled with its tributary width and line load."""
+    e1, e2 = bay['end1'], bay['end2']
+    navy, gold, muted = '#0A2342', '#C8951A', '#4A5568'
+    left_x, right_x, base_y = 90, 530, 118
+    max_load = max(e1['line_load_kn_m'], e2['line_load_kn_m']) or 1.0
+    h1 = 8 + (e1['line_load_kn_m'] / max_load) * 62
+    h2 = 8 + (e2['line_load_kn_m'] / max_load) * 62
+
+    def end_label(end):
+        if end.get('is_apex'):
+            return 'Apex'
+        return 'Ledger' if bay['kind'] == 'triangle' else ('Inner' if end is e1 else 'Outer')
+
+    return f"""
+<svg viewBox="0 0 620 220" width="100%" height="190" role="img"
+     aria-label="{bay['kind'].title()} bay loading diagram" style="border:1px solid #9bb8d6; background:#fff; margin:4px 0 6px;">
+  <polygon points="{left_x},{base_y} {right_x},{base_y} {right_x},{base_y - h2} {left_x},{base_y - h1}"
+           fill="#BFD8EE" stroke="{navy}" stroke-width="1.5"/>
+  <line x1="{left_x - 25}" y1="{base_y}" x2="{right_x + 25}" y2="{base_y}" stroke="{navy}" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="{left_x}" cy="{base_y}" r="5" fill="{navy}"/>
+  <circle cx="{right_x}" cy="{base_y}" r="5" fill="{navy}"/>
+  <text x="{left_x}" y="{base_y - h1 - 8}" text-anchor="middle" font-size="12.5" font-weight="700" fill="{navy}">{e1['line_load_kn_m']:.3f} kN/m</text>
+  <text x="{right_x}" y="{base_y - h2 - 8}" text-anchor="middle" font-size="12.5" font-weight="700" fill="{navy}">{e2['line_load_kn_m']:.3f} kN/m</text>
+  <text x="{left_x}" y="{base_y + 20}" text-anchor="middle" font-size="11" fill="{muted}">{end_label(e1)} end</text>
+  <text x="{right_x}" y="{base_y + 20}" text-anchor="middle" font-size="11" fill="{muted}">{end_label(e2)} end</text>
+  <line x1="{left_x}" y1="{base_y + 30}" x2="{left_x}" y2="{base_y + 48}" stroke="{gold}" stroke-width="1.5"/>
+  <line x1="{right_x}" y1="{base_y + 30}" x2="{right_x}" y2="{base_y + 48}" stroke="{gold}" stroke-width="1.5"/>
+  <line x1="{left_x}" y1="{base_y + 44}" x2="{right_x}" y2="{base_y + 44}" stroke="{gold}" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="{(left_x + right_x) / 2}" y="{base_y + 62}" text-anchor="middle" font-size="10.5" fill="{muted}">member (transom), length {bay['member_length_m']:.3f} m</text>
+  <text x="{left_x}" y="{base_y + 80}" text-anchor="middle" font-size="11" font-weight="700" fill="{navy}">t = {e1['tributary_width_m']:.3f} m</text>
+  <text x="{right_x}" y="{base_y + 80}" text-anchor="middle" font-size="11" font-weight="700" fill="{navy}">t = {e2['tributary_width_m']:.3f} m</text>
+</svg>
+"""
+
+
+def _radial_outer_diameter(structural):
+    """Overall circumscribing diameter (m) of the plan layout, for a radial/circular
+    scaffold (e.g. built around a tank) - the length x width bounding-box envelope
+    used for an ordinary rectangular scaffold doesn't mean anything for one of these,
+    so the brief description reports a diameter instead. Returns None if there's no
+    usable geometry."""
+    nodes = (structural.get('geometry') or {}).get('nodes', {})
+    if len(nodes) < 3:
+        return None
+    xs = [p[0] for p in nodes.values()]
+    zs = [p[2] for p in nodes.values()]
+    cx = sum(xs) / len(xs)
+    cz = sum(zs) / len(zs)
+    outer_r = max(math.hypot(p[0] - cx, p[2] - cz) for p in nodes.values())
+    return round(2 * outer_r, 3)
+
+
+def _platform_live_trap_workings(project, structural):
+    """
+    Trapezoidal / triangular live load on radial or tapered platform bays (STAAD TRAP
+    member loads: a value that varies linearly from v1 at the member's start joint to
+    v2 at its end joint) - used where the platform bay width itself varies along the
+    member, e.g. the radial transoms of a circular scaffold tower, instead of the
+    constant-UDL case _platform_live_workings already handles.
+
+    For each distinct TRAP group, tributary width at a genuine platform-edge ("ring")
+    node is the usual half-the-chord-to-each-neighbour value (_trap_ring_tributary_widths).
+    An end with v = 0 is the apex of a triangular bay (a single point shared by every
+    member in the group - no width there by definition); per the governing engineering
+    convention for that corner condition, each transom there only picks up platform
+    load from one side, so the OTHER end's width is halved relative to the normal
+    (both-sides) ring value a true trapezoid bay would use.
+
+    "Analyse one bay": every member in one TRAP line is geometrically identical by
+    symmetry, so only one representative member's working is shown, noting the rest
+    of the members it applies to; bays with an identical signature at other elevations
+    (or other LL-n load cases) are collapsed the same way platform_live_workings
+    collapses repeated platforms, via "also applies at".
+    """
+    members = structural.get('members', {})
+    nodes = (structural.get('geometry') or {}).get('nodes', {})
+    load_cases = structural.get('load_cases', [])
+    project_intensity, intensity_source = _project_load_intensity(project)
+
+    buckets = []
+    for case in load_cases:
+        for trap in case.get('member_trap_loads') or []:
+            if (trap.get('direction') or '').upper() != 'Y':
+                continue
+            member_ids = [m for m in trap['members'] if m in members]
+            if not member_ids:
+                continue
+
+            subgroups: dict = {}
+            for mid in member_ids:
+                m = members[mid]
+                p1, p2 = nodes.get(m['j1']), nodes.get(m['j2'])
+                if not p1 or not p2:
+                    continue
+                subgroups.setdefault(round(p1[1], 2), []).append(mid)
+
+            for elevation, group_members in subgroups.items():
+                v1, v2 = trap['v1'], trap['v2']
+                v1_apex = abs(v1) < 1e-6
+                v2_apex = abs(v2) < 1e-6
+                kind = 'triangle' if (v1_apex or v2_apex) else 'trapezoid'
+
+                j1_nodes = [members[mid]['j1'] for mid in group_members]
+                j2_nodes = [members[mid]['j2'] for mid in group_members]
+                zero_detail = {'tw': 0.0, 'half_prev': 0.0, 'half_next': 0.0, 'full_tw': 0.0}
+
+                def end_detail(node_ids, is_apex, rep_node):
+                    if is_apex:
+                        return dict(zero_detail)
+                    ring = _trap_ring_tributary_widths(node_ids, nodes)
+                    d = dict(ring.get(rep_node, {'tw': 0.0, 'half_prev': 0.0, 'half_next': 0.0}))
+                    d['full_tw'] = d['tw']
+                    if kind == 'triangle':
+                        # Halve the one real (non-apex) end - see docstring.
+                        d['tw'] = round(d['tw'] / 2.0, 4)
+                    return d
+
+                rep = group_members[0]
+                rep_m = members[rep]
+                end1_detail = end_detail(j1_nodes, v1_apex, rep_m['j1'])
+                end2_detail = end_detail(j2_nodes, v2_apex, rep_m['j2'])
+                end1_tw, end2_tw = end1_detail['tw'], end2_detail['tw']
+                end1_load = abs(v1)
+                end2_load = abs(v2)
+
+                q = project_intensity
+                q_src = intensity_source or 'project_info'
+                if not q:
+                    governing_tw = end1_tw if end1_tw else end2_tw
+                    governing_load = end1_load if end1_tw else end2_load
+                    q = round(governing_load / governing_tw, 3) if governing_tw else 0.0
+                    q_src = 'STAAD TRAP load / tributary width'
+                q_class = _load_class_for_intensity(q)
+                if q_class:
+                    q = LOAD_CLASS_INTENSITIES[q_class]
+
+                bay = {
+                    'kind': kind,
+                    'elevation_m': elevation,
+                    'elevation_label': f"Elev. {_format_number(elevation)} m",
+                    'members': sorted(group_members),
+                    'representative_member': rep,
+                    'member_length_m': round(rep_m.get('length_mm', 0.0) / 1000.0, 3),
+                    'q_kn_m2': q,
+                    'q_class': q_class,
+                    'q_source': q_src,
+                    'end1': {
+                        'node': rep_m['j1'], 'tributary_width_m': end1_tw,
+                        'half_prev': end1_detail['half_prev'], 'half_next': end1_detail['half_next'],
+                        'full_tributary_width_m': end1_detail['full_tw'],
+                        'line_load_kn_m': round(end1_load, 3), 'is_apex': v1_apex,
+                    },
+                    'end2': {
+                        'node': rep_m['j2'], 'tributary_width_m': end2_tw,
+                        'half_prev': end2_detail['half_prev'], 'half_next': end2_detail['half_next'],
+                        'full_tributary_width_m': end2_detail['full_tw'],
+                        'line_load_kn_m': round(end2_load, 3), 'is_apex': v2_apex,
+                    },
+                }
+                buckets.append(bay)
+
+    # Collapse identical bays (same kind + end values) into one worked example, the
+    # same "also applies at" convention _platform_live_workings uses for platforms.
+    seen: dict = {}
+    bays = []
+    for bay in sorted(buckets, key=lambda b: (b['elevation_m'], b['representative_member'])):
+        sig = (
+            bay['kind'],
+            round(bay['end1']['tributary_width_m'], 3), round(bay['end1']['line_load_kn_m'], 3),
+            round(bay['end2']['tributary_width_m'], 3), round(bay['end2']['line_load_kn_m'], 3),
+        )
+        if sig not in seen:
+            bay['also_applies_at'] = []
+            bay['svg'] = _trap_bay_svg(bay)
+            seen[sig] = bay
+            bays.append(bay)
+        else:
+            seen[sig]['also_applies_at'].append(bay['elevation_label'])
+
+    swl = max((b['q_kn_m2'] for b in bays), default=0.0)
+    return bays, round(swl, 3)
 
 
 def _brief_description(project, structural, structure_above_ground):
@@ -697,7 +933,7 @@ def _brief_description(project, structural, structure_above_ground):
     return (
         f"{opening}"
         f"{purpose}{equipment_text}{work_order_text}{location_sentence}. "
-        f"The scaffold envelope is {structural['dimension_display']} (length x width x height) and "
+        f"The scaffold envelope is {structural['dimension_display']} {structural.get('dimension_label', '(length x width x height)')} and "
         f"is configured with {component_text} as indicated on the approved drawing.{height_sentence}"
     )
 
@@ -861,16 +1097,81 @@ def _detect_platform_quads(structural):
     return ordered
 
 
+def _detect_radial_platform_quads(structural):
+    """Boarded-platform polygons for radial/circular platforms (STAAD TRAP member
+    loads on radial transoms - see _platform_live_trap_workings) - the quad (or,
+    at the apex, triangle) bounded by two angularly-adjacent radial transoms within
+    one ring. Complements _detect_platform_quads, which only understands straight
+    rectangular bays built from UNI-loaded transoms.
+
+    The renderer's platforms.txt format already accepts any simple polygon with 3+
+    corner nodes (PlatformConfig / build_platform_surface), so a triangular apex bay
+    needs no special handling there - just the right node list, in perimeter order.
+    """
+    members = structural.get('members', {})
+    nodes = structural.get('geometry', {}).get('nodes', {})
+
+    polygons = []
+    for case in structural.get('load_cases', []):
+        if case.get('category') != 'platform_live':
+            continue
+        for trap in case.get('member_trap_loads') or []:
+            if (trap.get('direction') or '').upper() != 'Y':
+                continue
+            member_ids = [m for m in trap['members'] if m in members]
+            if len(member_ids) < 3:
+                continue
+
+            subgroups: dict = {}
+            for mid in member_ids:
+                m = members[mid]
+                p1, p2 = nodes.get(m['j1']), nodes.get(m['j2'])
+                if not p1 or not p2:
+                    continue
+                subgroups.setdefault(round(p1[1], 2), []).append(mid)
+
+            v1_apex = abs(trap['v1']) < 1e-6
+            v2_apex = abs(trap['v2']) < 1e-6
+            ring_attr = 'j2' if v1_apex else 'j1'
+
+            for _, group_members in subgroups.items():
+                if len(group_members) < 3:
+                    continue
+                pts = {mid: nodes.get(members[mid][ring_attr]) for mid in group_members}
+                if any(p is None for p in pts.values()):
+                    continue
+                cx = sum(p[0] for p in pts.values()) / len(pts)
+                cz = sum(p[2] for p in pts.values()) / len(pts)
+                ordered = sorted(group_members, key=lambda mid: math.atan2(pts[mid][2] - cz, pts[mid][0] - cx))
+                count = len(ordered)
+
+                for i in range(count):
+                    a, b = members[ordered[i]], members[ordered[(i + 1) % count]]
+                    if v1_apex:
+                        polygons.append([a['j1'], a['j2'], b['j2']])
+                    elif v2_apex:
+                        polygons.append([a['j2'], a['j1'], b['j1']])
+                    else:
+                        polygons.append([a['j1'], a['j2'], b['j2'], b['j1']])
+
+    return polygons
+
+
 def _write_platforms_txt(structural):
     quads = _detect_platform_quads(structural)
+    radial = _detect_radial_platform_quads(structural)
     platforms_path = RENDERER_DIR / "platforms.txt"
-    if not quads:
+    all_polygons = quads + radial
+    if not all_polygons:
         print("  Platforms : no LL quads detected; keeping existing platforms.txt")
         return
     try:
-        lines = ["#BOARDED_PLATFORMS:"] + [','.join(str(n) for n in q) for q in quads]
+        lines = ["#BOARDED_PLATFORMS:"] + [','.join(str(n) for n in q) for q in all_polygons]
         platforms_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        print(f"  Platforms : auto-detected {len(quads)} quad(s) -> platforms.txt")
+        if radial:
+            print(f"  Platforms : auto-detected {len(quads)} quad(s), {len(radial)} radial bay(s) -> platforms.txt")
+        else:
+            print(f"  Platforms : auto-detected {len(quads)} quad(s) -> platforms.txt")
     except Exception as exc:
         print(f"  [WARN] Could not write platforms.txt: {exc}")
 
@@ -1344,10 +1645,9 @@ def make_install_notes(structural, project=None):
             f"({kicker:.3f}m) to form the first stable frame.",
         ]
 
-    for ml in mids:
+    if mids:
         notes.append(
-            f"Install mid-level horizontal ledgers and transoms at {ml:.1f}m height in "
-            f"accordance with the working drawing."
+            "Install mid-level horizontal ledgers and transoms in accordance with the working drawing."
         )
 
     notes += [
@@ -1446,11 +1746,31 @@ def main():
     site_photo = load_image('site_photo')   # no placeholder if missing - intentional
     images = {k: load_image(k) for k in [
         '3d_model',
-        'load_platform_live', 'load_handrail_x', 'load_handrail_z',
         'load_wind_x', 'load_wind_z',
         'connection_table',
         'deflection_vertical_table', 'deflection_horizontal_table',
     ]}
+
+    # One diagram per LL / handrail load case: LL, LL-1, LL-2 ... (image files
+    # load_platform_live.png, load_platform_live_1.png, load_platform_live_2.png ...)
+    load_diagrams = []
+    for category, base, name, caption in (
+        ('platform_live', 'load_platform_live', 'Platform Live Load', 'Live Load (LL)'),
+        ('handrail_x',    'load_handrail_x',    'Handrail X',         'Handrail Load X (HLX)'),
+        ('handrail_z',    'load_handrail_z',    'Handrail Z',         'Handrail Load Z (HLZ)'),
+    ):
+        count = sum(1 for c in structural['load_cases'] if c['category'] == category)
+        if category == 'platform_live':
+            count = max(1, count)
+        for i in range(count):
+            key = base if i == 0 else f'{base}_{i}'
+            suffix = '' if i == 0 else f'-{i}'
+            images[key] = load_image(key)
+            load_diagrams.append({
+                'image': images[key], 'file': key + '.png',
+                'name': name + suffix, 'caption': caption + suffix,
+                'category': category,
+            })
     loaded = sum(1 for v in images.values() if v)
     print(f"  Images    : {loaded}/{len(images)} found")
 
@@ -1475,7 +1795,15 @@ def main():
         f"{_format_number(plan_length)}m x {_format_number(plan_width)}m x {_format_number(geom['height'])}m"
     )
     platform_live_workings, swl_kn_m2 = _platform_live_workings(project, structural)
+    trap_live_bays, trap_swl_kn_m2 = _platform_live_trap_workings(project, structural)
     structural['platform_live_workings'] = platform_live_workings
+    structural['trap_live_bays'] = trap_live_bays
+    if trap_live_bays:
+        diameter = _radial_outer_diameter(structural)
+        if diameter:
+            structural['dimension_display'] = f"{_format_number(diameter)}m dia. x {_format_number(geom['height'])}m"
+            structural['dimension_label'] = "(diameter x height)"
+    swl_kn_m2 = max(swl_kn_m2, trap_swl_kn_m2)
     structural['swl_kn_m2'] = swl_kn_m2
     structural['swl_display'] = _format_load_value(swl_kn_m2)
     structural['swl_load_class'] = _load_class_for_intensity(swl_kn_m2)
@@ -1543,17 +1871,32 @@ def main():
     # reaction, so the Total Vertical Load display applies whenever the STAAD model has one
     # — not just for Hanging scaffolds.
     has_fixed_supports = bool(structural.get('supports', {}).get('fixed_nodes'))
+    # Ordinary ground-standing base plates ("FIXED BUT MX MY MZ") also carry a vertical
+    # reaction, but nearly every project has these, so showing this by default would clutter
+    # most reports — only wired in when explicitly requested.
+    show_base_fy = _bool_setting(project.get('SHOW_BASE_FY'), False)
     tie_sum_fy = None
     if is_hanging or has_fixed_supports:
         gov_fy_uls = sr.get('net_fy_at_fixed', {}).get('governing_fy', {}).get('ULS')
         if gov_fy_uls:
             tie_sum_fy = gov_fy_uls['total_y']
+    elif show_base_fy:
+        gov_fy_base_uls = sr.get('net_fy_at_base', {}).get('governing_fy', {}).get('ULS')
+        if gov_fy_base_uls:
+            tie_sum_fy = gov_fy_base_uls['total_y']
     if _optional_float(project.get('TIE_FORCE_FY')) is not None:
         tie_sum_fy = _optional_float(project.get('TIE_FORCE_FY'))
 
     # -- Deflection L: look up member length from STAAD geometry -----------------
     members_dict = structural.get('members', {})
-    d = structural['displacements']
+    d  = structural['displacements']
+    # Primary auto-computed source (STAAD "MEMBER SECTION DISPLACEMENTS" / the
+    # GUI's "Max Displacement" tool, SLS-filtered, local chord-relative resultant
+    # -- see _parse_section_displacements). Falls back to the joint-based
+    # MAXIMUM DISPLACEMENTS table (d) when a project has no section-displacement
+    # output. project_info.txt's MAX_VERT_DISP_MM/MAX_HORIZ_DISP_MM remain the
+    # manual override on top of either source.
+    sd = structural.get('section_displacements', {})
 
     def _span_from_node_auto(node_id, fallback_mm):
         """Longest member connected to the critical-displacement node."""
@@ -1564,30 +1907,34 @@ def main():
                 return max(lengths)
         return fallback_mm
 
-    def _member_length_mm(member_key, fallback_mm):
+    def _member_length_mm(member_key, auto_member, fallback_mm):
         try:
             mid = int(project.get(member_key, 0) or 0)
             if mid and mid in members_dict:
                 return members_dict[mid]['length_mm']
         except (ValueError, TypeError):
             pass
+        if auto_member and auto_member in members_dict:
+            return members_dict[auto_member]['length_mm']
         return fallback_mm
 
-    vert_span_mm  = _member_length_mm('MAX_VERT_MEMBER',
+    vert_span_mm  = _member_length_mm('MAX_VERT_MEMBER', sd.get('max_vertical_member'),
                         _span_from_node_auto(d.get('max_vertical_node'),  geom['width'] * 1000))
-    horiz_span_mm = _member_length_mm('MAX_HORIZ_MEMBER',
+    horiz_span_mm = _member_length_mm('MAX_HORIZ_MEMBER', sd.get('max_horizontal_member'),
                         _span_from_node_auto(d.get('max_horizontal_node'), geom['depth'] * 1000))
     vert_allow    = round(vert_span_mm  / 100, 1)
     horiz_allow   = round(horiz_span_mm / 200, 1)
 
     # Member details for report display
-    def _member_info(member_key, auto_node=None):
+    def _member_info(member_key, auto_member=None, auto_node=None):
         try:
             mid = int(project.get(member_key, 0) or 0)
             if mid and mid in members_dict:
                 return {'id': mid, 'length_mm': members_dict[mid]['length_mm']}
         except:
             pass
+        if auto_member and auto_member in members_dict:
+            return {'id': auto_member, 'length_mm': members_dict[auto_member]['length_mm']}
         if auto_node:
             connected = [(mid, m['length_mm']) for mid, m in members_dict.items()
                          if m.get('j1') == auto_node or m.get('j2') == auto_node]
@@ -1596,8 +1943,10 @@ def main():
                 return {'id': best_mid, 'length_mm': best_len}
         return None
 
-    vert_member_info  = _member_info('MAX_VERT_MEMBER',  d.get('max_vertical_node'))
-    horiz_member_info = _member_info('MAX_HORIZ_MEMBER', d.get('max_horizontal_node'))
+    vert_member_info  = _member_info('MAX_VERT_MEMBER',  sd.get('max_vertical_member'),
+                                      d.get('max_vertical_node'))
+    horiz_member_info = _member_info('MAX_HORIZ_MEMBER', sd.get('max_horizontal_member'),
+                                      d.get('max_horizontal_node'))
 
     total_horiz_x = round(wl.get('total_x', 0.0) + (hl.get('total_x', 0.0) if has_handrail else 0.0), 3)
     total_horiz_z = round(wl.get('total_z', 0.0) + (hl.get('total_z', 0.0) if has_handrail else 0.0), 3)
@@ -1736,10 +2085,28 @@ def main():
         connection_class = _connection_class(max_axial)
 
     # -- Deflection values (auto from .out file; project_info keys are optional overrides) --
-    max_vert_mm   = _float(project.get('MAX_VERT_DISP_MM'),  d['max_vertical_mm'])
-    max_vert_lc   = project.get('MAX_VERT_DISP_LC',  '')  or str(d['max_vertical_lc'])
-    max_horiz_mm  = _float(project.get('MAX_HORIZ_DISP_MM'), d['max_horizontal_mm'])
-    max_horiz_lc  = project.get('MAX_HORIZ_DISP_LC', '')  or str(d['max_horizontal_lc'])
+    auto_vert_mm   = sd.get('max_vertical_mm')   if sd.get('max_vertical_lc')   else d['max_vertical_mm']
+    auto_vert_lc   = sd.get('max_vertical_lc')   if sd.get('max_vertical_lc')   else d['max_vertical_lc']
+    auto_horiz_mm  = sd.get('max_horizontal_mm') if sd.get('max_horizontal_lc') else d['max_horizontal_mm']
+    auto_horiz_lc  = sd.get('max_horizontal_lc') if sd.get('max_horizontal_lc') else d['max_horizontal_lc']
+    max_vert_mm   = _float(project.get('MAX_VERT_DISP_MM'),  auto_vert_mm)
+    max_vert_lc   = project.get('MAX_VERT_DISP_LC',  '')  or str(auto_vert_lc)
+    max_horiz_mm  = _float(project.get('MAX_HORIZ_DISP_MM'), auto_horiz_mm)
+    max_horiz_lc  = project.get('MAX_HORIZ_DISP_LC', '')  or str(auto_horiz_lc)
+
+    # Top-15 member lists for the deflection tables (mirrors the Member Axial Force
+    # Summary's top-30 list). Auto from the section-displacement scan; a manual
+    # MAX_VERT_DISP_MM/MAX_HORIZ_DISP_MM override collapses this to its single row.
+    if _optional_float(project.get('MAX_VERT_DISP_MM')) is not None:
+        top_vert_members = [{'member': vert_member_info['id'] if vert_member_info else '',
+                              'lc': max_vert_lc, 'mm': max_vert_mm}]
+    else:
+        top_vert_members = sd.get('vert_rows', [])[:15]
+    if _optional_float(project.get('MAX_HORIZ_DISP_MM')) is not None:
+        top_horiz_members = [{'member': horiz_member_info['id'] if horiz_member_info else '',
+                               'lc': max_horiz_lc, 'mm': max_horiz_mm}]
+    else:
+        top_horiz_members = sd.get('horiz_rows', [])[:15]
 
     install_notes = make_install_notes(structural, project)
     date_gen = datetime.now().strftime('%d-%b-%Y')
@@ -1761,6 +2128,7 @@ def main():
         nlng_logo     = nlng_logo,
         company_logo  = company_logo,
         images        = images,
+        load_diagrams = load_diagrams,
         attachments   = attachments,
         vert_allow    = vert_allow,
         horiz_allow   = horiz_allow,
@@ -1785,6 +2153,7 @@ def main():
         tie_fy_from_out   = tie_fy_from_out,
         is_hanging        = is_hanging,
         has_fixed_supports = has_fixed_supports,
+        show_base_fy       = show_base_fy,
         install_notes = install_notes,
         date_gen      = date_gen,
         max_axial        = max_axial,
@@ -1797,6 +2166,8 @@ def main():
         max_vert_lc      = max_vert_lc,
         max_horiz_mm     = max_horiz_mm,
         max_horiz_lc     = max_horiz_lc,
+        top_vert_members  = top_vert_members,
+        top_horiz_members = top_horiz_members,
         vert_span_mm      = vert_span_mm,
         vert_member_info  = vert_member_info,
         horiz_span_mm     = horiz_span_mm,

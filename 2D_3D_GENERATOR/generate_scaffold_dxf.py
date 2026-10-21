@@ -1261,22 +1261,232 @@ def draw_frame(canvas: Canvas, x0, y0, x1, y1):
     canvas.line((x0, y1), (x0, y0), layer="FRAME")
 
 
-def make_view(joints, members, levels, outdir: Path, name, axis_a, axis_b):
-    canvas = Canvas()
-    draw_projection(canvas, joints, members, lambda p: (p[axis_a], p[axis_b]))
+def detect_radial_rings(joints, min_ring_nodes=5, radius_tol_frac=0.06):
+    """If the plan layout (X-Z) is radial/circular - concentric rings of evenly
+    spaced nodes around a shared centre, e.g. a scaffold tower erected around a
+    tank - return {'center': (cx, cz), 'rings': [{'radius', 'points'}, ...],
+    'bay_count', 'bay_angle_deg'}. Otherwise None (an ordinary rectangular bay
+    layout), so the normal X/Z dimension chains are used unchanged.
 
+    Detected purely from joint geometry (this module has no load-case data): every
+    distinct plan (X, Z) position used anywhere in the model is grouped into radius
+    "bands" measured from the centroid of all those positions; a band only counts
+    as a genuine ring if it has enough nodes, all sitting within a tight tolerance
+    of the same radius (so an ordinary rectangle's four distinct corner-radii, which
+    are each hit by only 1-2 nodes, never qualifies).
+    """
+    plan = sorted({(round(p[0], 3), round(p[2], 3)) for p in joints.values()})
+    if len(plan) < min_ring_nodes:
+        return None
+
+    cx = sum(p[0] for p in plan) / len(plan)
+    cz = sum(p[1] for p in plan) / len(plan)
+    with_r = sorted((math.hypot(x - cx, z - cz), x, z) for x, z in plan)
+
+    bands = []
+    for r, x, z in with_r:
+        if bands and r - bands[-1][-1][0] < 0.1:
+            bands[-1].append((r, x, z))
+        else:
+            bands.append([(r, x, z)])
+
+    rings = []
+    for band in bands:
+        if len(band) < min_ring_nodes:
+            continue
+        avg_r = sum(b[0] for b in band) / len(band)
+        if avg_r < 0.2:
+            continue  # the centre point itself, not a ring
+        if max(abs(b[0] - avg_r) for b in band) > radius_tol_frac * max(avg_r, 1.0):
+            continue  # not tight enough to be a real ring
+        rings.append({'radius': avg_r, 'points': [(b[1], b[2]) for b in band]})
+
+    if not rings:
+        return None
+    bay_count = max(len(r['points']) for r in rings)
+    if bay_count < min_ring_nodes:
+        return None
+
+    return {
+        'center': (cx, cz),
+        'rings': sorted(rings, key=lambda r: r['radius']),
+        'bay_count': bay_count,
+        'bay_angle_deg': 360.0 / bay_count,
+    }
+
+
+def dim_radius(canvas: Canvas, center, point, text=None, text_height=0.1, layer="DIMENSION"):
+    cx, cy = center
+    px, py = point
+    angle = math.atan2(py - cy, px - cx)
+    canvas.line(center, point, layer=layer)
+    arrow(canvas, point, angle, layer=layer)
+    label = text if text is not None else f"R {fmt_m(math.hypot(px - cx, py - cy))}"
+    mid = ((cx + px) / 2.0, (cy + py) / 2.0)
+    perp = angle + math.pi / 2
+    off = text_height * 0.9
+    label_pt = (mid[0] + off * math.cos(perp), mid[1] + off * math.sin(perp))
+    deg = math.degrees(angle)
+    if deg > 90 or deg < -90:
+        deg += 180  # keep the label text upright/readable
+    canvas.text(label, label_pt, text_height, rotation=deg, layer=layer, align="center")
+
+
+def dim_between(canvas: Canvas, p0, p1, offset, text=None, text_height=0.1, layer="DIMENSION"):
+    """Linear dimension between two arbitrary (not necessarily axis-aligned) points -
+    a witness-line-offset dimension line parallel to p0-p1, the same convention as
+    dim_horizontal/dim_vertical, just not restricted to a horizontal or vertical run.
+    `offset` is a signed distance along the perpendicular to p0-p1 (its sign picks
+    which side of the member the dimension line is drawn on)."""
+    dx, dz = p1[0] - p0[0], p1[1] - p0[1]
+    length = math.hypot(dx, dz)
+    if length < 1e-6:
+        return
+    ux, uz = dx / length, dz / length
+    nx, nz = -uz, ux
+    gap = GAP
+    p0e = (p0[0] + nx * offset, p0[1] + nz * offset)
+    p1e = (p1[0] + nx * offset, p1[1] + nz * offset)
+    sign = math.copysign(1, offset)
+    canvas.line((p0[0] + nx * gap * sign, p0[1] + nz * gap * sign), p0e, layer=layer)
+    canvas.line((p1[0] + nx * gap * sign, p1[1] + nz * gap * sign), p1e, layer=layer)
+    canvas.line(p0e, p1e, layer=layer)
+    angle = math.atan2(uz, ux)
+    arrow(canvas, p0e, angle + math.pi, layer=layer)
+    arrow(canvas, p1e, angle, layer=layer)
+    label = text if text is not None else fmt_m(length)
+    mid = ((p0e[0] + p1e[0]) / 2.0, (p0e[1] + p1e[1]) / 2.0)
+    off2 = text_height * 0.9 * sign
+    label_pt = (mid[0] + nx * off2, mid[1] + nz * off2)
+    deg = math.degrees(angle)
+    if deg > 90 or deg < -90:
+        deg += 180
+    canvas.text(label, label_pt, text_height, rotation=deg, layer=layer, align="center")
+
+
+def _radial_member_samples(radial):
+    """One representative ledger (circumferential member, within a ring) and one
+    representative transom (radial member, between two rings) to dimension - "one
+    each" is enough since every bay is identical by symmetry (same convention as
+    the live-load working in the report: analyse one bay, not all of them)."""
+    cx, cz = radial['center']
+
+    def by_angle(ring):
+        return sorted(
+            ring['points'],
+            key=lambda p: math.atan2(p[1] - cz, p[0] - cx),
+        )
+
+    rings = radial['rings']
+    inner_sorted = by_angle(rings[0])
+    ledger = (inner_sorted[0], inner_sorted[1]) if len(inner_sorted) >= 2 else None
+
+    transom = None
+    if len(rings) >= 2:
+        outer_sorted = by_angle(rings[1])
+        p_in = inner_sorted[0]
+        in_angle = math.atan2(p_in[1] - cz, p_in[0] - cx)
+        p_out = min(
+            outer_sorted,
+            key=lambda p: abs(((math.atan2(p[1] - cz, p[0] - cx) - in_angle + math.pi) % (2 * math.pi)) - math.pi),
+        )
+        transom = (p_in, p_out)
+
+    return ledger, transom
+
+
+def add_radial_dimensions(canvas: Canvas, radial):
+    """Radius leaders + a bay-count/diameter callout, in place of the meaningless
+    X/Z dimension chains a radial plan would otherwise get (see detect_radial_rings) -
+    plus one representative ledger and transom dimension (every bay is identical)."""
+    cx, cz = radial['center']
+    canvas.circle((cx, cz), 0.05, layer="DIMENSION")
+    canvas.text("C/L", (cx, cz - 0.16), 0.08, layer="DIMENSION", align="center")
+
+    # One radius leader per ring, fanned out at different angles so the labels
+    # don't overlap when rings sit close together.
+    base_angle = math.radians(100)
+    step = math.radians(18)
+    for i, ring in enumerate(radial['rings']):
+        angle = base_angle + i * step
+        point = (cx + ring['radius'] * math.cos(angle), cz + ring['radius'] * math.sin(angle))
+        dim_radius(canvas, (cx, cz), point)
+
+    ledger, transom = _radial_member_samples(radial)
+    if ledger:
+        p0, p1 = ledger
+        mid = ((p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0)
+        outward = 1 if math.hypot(mid[0] - cx, mid[1] - cz) >= radial['rings'][0]['radius'] else -1
+        dim_between(canvas, p0, p1, 0.18 * outward)
+    if transom:
+        p0, p1 = transom
+        dim_between(canvas, p0, p1, -0.18)
+
+    outer = radial['rings'][-1]['radius']
+    note = [
+        f"RADIAL SCAFFOLD - {radial['bay_count']} No. BAYS @ {radial['bay_angle_deg']:.2f} DEG c/c",
+        f"OVERALL DIAMETER = {fmt_m(2 * outer)}",
+    ]
+    y = cz - outer - 0.5
+    for i, line in enumerate(note):
+        canvas.text(line, (cx, y - i * 0.14), 0.09, layer="DIMENSION", align="center")
+
+
+# A single full-height elevation panel on a tall/narrow structure (a scaffold tower)
+# compresses every level's dimension text past legibility once printed on a fixed
+# sheet - there just isn't enough vertical room per level. Past this height, break
+# the elevation into shorter panels tiled across the sheet's unused width instead
+# (the same tiling convention the grid format already uses for multiple plan
+# levels), so each panel gets a normal amount of room for its own level chain.
+# A tall/narrow structure (a scaffold tower) drawn upright wastes most of a landscape
+# sheet's width while compressing every level's dimension text into its narrow
+# height - past this height, draw the elevation lying on its side instead (its
+# height running along the sheet's long edge), which both enlarges the drawing and
+# gives every dimension far more room, instead of shrinking to fit a tall strip.
+TALL_ELEVATION_HEIGHT = 10.0
+
+
+def add_level_guides_t(canvas: Canvas, levels, y0, y1, major_levels):
+    """Same as add_level_guides, but for a 'lying down' elevation: vertical guide
+    lines (one per level, constant X) instead of horizontal ones."""
+    for level in levels:
+        if any(abs(level - m) < 0.002 for m in major_levels):
+            canvas.line((level, y0), (level, y1), layer="LEVEL_GUIDE", ltype="DASHED")
+
+
+def make_view(joints, members, levels, outdir: Path, name, axis_a, axis_b):
     vals_a = [p[axis_a] for p in joints.values()]
     vals_b = [p[axis_b] for p in joints.values()]
     amin, amax = min(vals_a), max(vals_a)
     bmin, bmax = min(vals_b), max(vals_b)
 
+    lie_down = axis_b == 1 and (bmax - bmin) > TALL_ELEVATION_HEIGHT
+
+    canvas = Canvas()
+    if lie_down:
+        # Rotated: the height (b) axis now runs along canvas-X, the width (a) axis
+        # along canvas-Y.
+        draw_projection(canvas, joints, members, lambda p: (p[axis_b], p[axis_a]))
+    else:
+        draw_projection(canvas, joints, members, lambda p: (p[axis_a], p[axis_b]))
+
+    radial = detect_radial_rings(joints) if (name == "plan" and axis_a == 0 and axis_b == 2) else None
+
     major_a = major_axis_values(joints, axis_a, max_values=12, min_gap=0.35)
     major_b = major_axis_values(joints, axis_b, max_values=12, min_gap=0.30 if axis_b == 1 else 0.35)
-    if axis_b == 1:
-        add_level_guides(canvas, levels, amin - 0.18, amax + 0.18, major_b)
 
-    add_chain_horizontal(canvas, major_a, bmin - 0.38, bmin, bmin - 0.75)
-    add_chain_vertical(canvas, major_b, amax + 0.70, amax, amax + 1.15)
+    if lie_down:
+        add_level_guides_t(canvas, levels, amin - 0.18, amax + 0.18, major_b)
+        add_chain_horizontal(canvas, major_b, amin - 0.38, amin, amin - 0.75)
+        add_chain_vertical(canvas, major_a, bmin - 0.70, bmin, bmin - 1.15)
+    else:
+        if axis_b == 1:
+            add_level_guides(canvas, levels, amin - 0.18, amax + 0.18, major_b)
+        if radial:
+            add_radial_dimensions(canvas, radial)
+        else:
+            add_chain_horizontal(canvas, major_a, bmin - 0.38, bmin, bmin - 0.75)
+            add_chain_vertical(canvas, major_b, amax + 0.70, amax, amax + 1.15)
 
     path = outdir / f"scaffold_{name}_view.dxf"
     if ezdxf_available():

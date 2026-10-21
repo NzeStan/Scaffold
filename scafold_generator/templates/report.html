@@ -262,7 +262,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
       Total Horizontal Load in the Z Direction (F<sub>Z</sub>): {{ tie_sum_fz }} kN{% if tie_fz_from_out %} <span class="src-tag">(Extracted from the STAAD output file)</span>{% endif %}
     </div>
     {% endif %}
-    {% if (is_hanging or has_fixed_supports) and tie_sum_fy is not none %}
+    {% if (is_hanging or has_fixed_supports or show_base_fy) and tie_sum_fy is not none %}
     <div style="font-size:10pt; font-weight:bold; color:var(--navy); margin-top:2px;">
       Total Vertical Load in the Y Direction (F<sub>Y</sub>): {{ tie_sum_fy }} kN{% if tie_fy_from_out %} <span class="src-tag">(Extracted from the STAAD output file)</span>{% endif %}
     </div>
@@ -517,9 +517,11 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
   <tr>
     <td style="border:none; width:155px; font-weight:bold; color:var(--navy-mid); font-size:8.5pt; vertical-align:top; padding:2px 8px 2px 0;">BS EN 12811-1</td>
     <td style="border:none; line-height:1.7;">
-      Platform live loading is applied to the scaffold working platforms as member UDLs in the STAAD model.
-      The load intensity is multiplied by the tributary width of each supporting member to obtain the applied member line load.
-      {% if structural.loads.platform_live_cases %}(LC {{ structural.loads.platform_live_cases | join(', ') }}){% endif %}.
+      Platform live loading is applied to the scaffold working platforms as member loads in the STAAD model
+      &mdash; a constant UDL on a regular bay, or a linearly-varying (trapezoidal / triangular) load where the
+      bay width itself changes along the member, e.g. a radial platform. The load intensity is multiplied by
+      the tributary width of each supporting member (at each end, for a varying load) to obtain the applied
+      member line load.
     </td>
   </tr>
 </table>
@@ -562,6 +564,56 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 </p>
 {% endif %}
 {% endif %}{% endfor %}
+
+{% if structural.trap_live_bays %}
+<div class="sub-hdr" style="margin-top:10px;">Trapezoidal / Triangular Live Load (Radial Platform Bays) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
+<p style="font-size:8.3pt; line-height:1.6; margin:2px 0 6px;">
+  Some platform bays taper with radius (a trapezoidal bay) or converge to a point at the centre of the
+  platform (a triangular bay). STAAD applies these as a linearly-varying TRAP member load, so the
+  tributary width &mdash; and the resulting line load &mdash; is calculated separately at each end of
+  the member. One representative bay of each kind is analysed below; the same geometry repeats at
+  every elevation and member listed.
+</p>
+{% for bay in structural.trap_live_bays %}
+<div style="font-size:8.8pt; font-weight:bold; color:var(--navy); margin:10px 0 3px 0; border-bottom:1.2px solid var(--navy-mid); padding-bottom:2px;">
+  {{ bay.kind | capitalize }} Bay &mdash; {{ bay.elevation_label }}{% if bay.q_class %} <span style="font-weight:normal; font-size:8pt; color:var(--muted);">(BS EN 12811-1 Class {{ bay.q_class }})</span>{% endif %}
+</div>
+{{ bay.svg | safe }}
+<div style="font-size:8pt; color:var(--navy-mid); margin:2px 0 4px 2px;">
+  Representative member: <strong>{{ bay.representative_member }}</strong> (Node {{ bay.end1.node }} &rarr; Node {{ bay.end2.node }}){% if bay.members | length > 1 %} &mdash; the same bay geometry repeats identically for Members {{ bay.members | join(', ') }}{% endif %}.
+</div>
+<div style="font-family:'Courier New',monospace; font-size:9pt; line-height:1.8; margin:0 0 6px 4px;">
+{% if bay.kind == 'trapezoid' %}
+<strong>Calculation (q = {{ bay.q_kn_m2 }} kN/m&sup2;)</strong><br/>
+<br/>
+Step 1: Tributary width at each end<br/>
+Inner end: t_in = {{ bay.end1.half_prev }} + {{ bay.end1.half_next }} = {{ bay.end1.tributary_width_m }} m<br/>
+Outer end: t_out = {{ bay.end2.half_prev }} + {{ bay.end2.half_next }} = {{ bay.end2.tributary_width_m }} m<br/>
+<br/>
+Step 2: Line load at each end<br/>
+Inner end: w&#8321; = {{ bay.q_kn_m2 }} &times; {{ bay.end1.tributary_width_m }} = {{ bay.end1.line_load_kn_m }} kN/m<br/>
+Outer end: w&#8322; = {{ bay.q_kn_m2 }} &times; {{ bay.end2.tributary_width_m }} = {{ bay.end2.line_load_kn_m }} kN/m
+{% else %}
+{% set ring_end = bay.end2 if bay.end1.is_apex else bay.end1 %}
+Step 1: Tributary width (each transom)<br/>
+The triangle has platform on one side of each transom, so each transom takes half the spacing.<br/>
+Ledger end: t = {{ ring_end.full_tributary_width_m }} / 2 = {{ ring_end.tributary_width_m }} m<br/>
+Apex end: t = 0 / 2 = 0 m<br/>
+<br/>
+The tributary width tapers to zero, so the load is a triangle, not a trapezoid.<br/>
+<br/>
+Step 2: Line load (q = {{ bay.q_kn_m2 }} kN/m&sup2;)<br/>
+Ledger end: w = {{ bay.q_kn_m2 }} &times; {{ ring_end.tributary_width_m }} = {{ ring_end.line_load_kn_m }} kN/m<br/>
+Apex end: w = 0 kN/m
+{% endif %}
+</div>
+{% if bay.also_applies_at %}
+<p style="font-size:7.8pt; font-style:italic; color:var(--navy-mid); margin:2px 0 8px 4px;">
+  The same bay geometry and loading apply at {{ bay.also_applies_at | join(', ') }}.
+</p>
+{% endif %}
+{% endfor %}
+{% endif %}
 
 <div class="callout">
   Member Load = Load Intensity &times; Tributary Width.
@@ -613,32 +665,20 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
 {# -- Load Diagrams inline -- #}
 <div class="sub-hdr" style="margin-top:8mm;">Load Diagrams</div>
 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_platform_live'] %}<img src="{{ images['load_platform_live'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Platform Live Load</strong><small>load_platform_live.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Live Load (LL)</div>
+  {% for d in load_diagrams %}
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
+    {% if d.image %}<img src="{{ d.image }}" class="app-img" style="max-height:180px;"/>
+    {% else %}<div class="img-box" style="min-height:140px;"><strong>{{ d.name }}</strong><small>{{ d.file }}</small></div>{% endif %}
+    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">{{ d.caption }}</div>
   </div>
-  {% if structural.handrail_loads.has_x %}
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_handrail_x'] %}<img src="{{ images['load_handrail_x'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Handrail X</strong><small>load_handrail_x.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Handrail Load X (HLX)</div>
-  </div>
-  {% endif %}
-  {% if structural.handrail_loads.has_z %}
-  <div style="flex:1; min-width:140px;">
-    {% if images['load_handrail_z'] %}<img src="{{ images['load_handrail_z'] }}" class="app-img" style="max-height:180px;"/>
-    {% else %}<div class="img-box" style="min-height:140px;"><strong>Handrail Z</strong><small>load_handrail_z.png</small></div>{% endif %}
-    <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Handrail Load Z (HLZ)</div>
-  </div>
-  {% endif %}
+  {% endfor %}
   {% if has_wind %}
-  <div style="flex:1; min-width:140px;">
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
     {% if images['load_wind_x'] %}<img src="{{ images['load_wind_x'] }}" class="app-img" style="max-height:180px;"/>
     {% else %}<div class="img-box" style="min-height:140px;"><strong>Wind Load X</strong><small>load_wind_x.png</small></div>{% endif %}
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Wind Load X (WLX)</div>
   </div>
-  <div style="flex:1; min-width:140px;">
+  <div style="flex:1; min-width:140px; break-inside:avoid; page-break-inside:avoid;">
     {% if images['load_wind_z'] %}<img src="{{ images['load_wind_z'] }}" class="app-img" style="max-height:180px;"/>
     {% else %}<div class="img-box" style="min-height:140px;"><strong>Wind Load Z</strong><small>load_wind_z.png</small></div>{% endif %}
     <div style="font-size:7.5pt; text-align:center; color:var(--muted); margin-top:2px;">Wind Load Z (WLZ)</div>
@@ -906,6 +946,27 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </tr>
   </tbody>
 </table>
+{% if top_vert_members %}
+<div class="sub-hdr" style="margin-top:8px; font-size:8.5pt;">Vertical Displacement Summary (Top {{ [top_vert_members|length, 15]|min }} Members) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
+<table style="font-size:8pt; margin-bottom:6px;">
+  <thead>
+    <tr>
+      <th style="width:33%;">Member</th>
+      <th style="width:33%;">L/C</th>
+      <th style="width:34%; background:var(--gold); color:var(--navy);">Local Displacement (mm)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in top_vert_members %}
+    <tr>
+      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
+      <td style="text-align:center;">{{ m.lc }}</td>
+      <td style="text-align:center; font-weight:bold; {% if m.mm == max_vert_mm %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.mm) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% if images['deflection_vertical_table'] %}
 <div style="margin-top:6px; break-inside:avoid; page-break-inside:avoid;">
   <div class="sub-hdr" style="font-size:8.5pt;">Vertical Displacement Table (SLS Combinations)</div>
@@ -945,6 +1006,27 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
     </tr>
   </tbody>
 </table>
+{% if top_horiz_members %}
+<div class="sub-hdr" style="margin-top:8px; font-size:8.5pt;">Horizontal Displacement Summary (Top {{ [top_horiz_members|length, 15]|min }} Members) <span class="src-tag" style="font-size:7.5pt;">(Extracted from the STAAD output file)</span></div>
+<table style="font-size:8pt; margin-bottom:6px;">
+  <thead>
+    <tr>
+      <th style="width:33%;">Member</th>
+      <th style="width:33%;">L/C</th>
+      <th style="width:34%; background:var(--gold); color:var(--navy);">Local Displacement (mm)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in top_horiz_members %}
+    <tr>
+      <td style="text-align:center; font-weight:bold;">{{ m.member }}</td>
+      <td style="text-align:center;">{{ m.lc }}</td>
+      <td style="text-align:center; font-weight:bold; {% if m.mm == max_horiz_mm %}background:#D4EDDA;{% endif %}">{{ "%.3f"|format(m.mm) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% if images['deflection_horizontal_table'] %}
 <div style="margin-top:6px; break-inside:avoid; page-break-inside:avoid;">
   <div class="sub-hdr" style="font-size:8.5pt;">Horizontal Displacement Table (SLS Combinations)</div>
