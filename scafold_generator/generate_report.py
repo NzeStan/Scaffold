@@ -1669,7 +1669,7 @@ def make_install_notes(structural, project=None):
     notes += [
         "The scaffold structure must be inspected and tagged by a competent advance scaffold "
         "inspector after erection and before use.",
-        "The safe working load (SWL) stated on the design report must not be exceeded at any "
+        "The load intensity stated on the design report must not be exceeded at any "
         "time during operations.",
         "All modifications made after erection must be carried out by a competent scaffold team "
         "with the approval of the scaffold engineer. End-user or third-party modification "

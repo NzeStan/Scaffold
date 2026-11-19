@@ -235,7 +235,7 @@ th .src-tag { display: block; margin-left: 0; margin-top: 1px; }
         <div class="sub-hdr" style="margin:0 0 6px 0;">BRIEF DESCRIPTION OF SCAFFOLD DESIGN</div>
         <p style="line-height:1.7; text-align:justify; font-size:9.5pt;">{{ structural.brief_description }}</p>
         <p style="margin-top:8px; font-size:11pt; font-weight:bold; color:var(--navy);">
-          SAFE WORKING LOAD (SWL): {{ structural.swl_display }} kN/m&sup2;
+          LOAD INTENSITY: {{ structural.swl_display }} kN/m&sup2;
         </p>
       </div>
     </div>
@@ -618,7 +618,7 @@ Apex end: w = 0 kN/m
 <div class="callout">
   Member Load = Load Intensity &times; Tributary Width.
   Edge members carry half the adjacent bay width; interior members carry half the bay from each side.<br/>
-  Governing load intensity (SWL) = <strong>{{ structural.swl_display }} kN/m&sup2;</strong>{% if structural.swl_load_class %} &mdash; BS EN 12811-1 Class {{ structural.swl_load_class }}{% endif %}.<br/>
+  Governing load intensity = <strong>{{ structural.swl_display }} kN/m&sup2;</strong>{% if structural.swl_load_class %} &mdash; BS EN 12811-1 Class {{ structural.swl_load_class }}{% endif %}.<br/>
   Total applied platform live load = <strong>{{ structural.loads.platform_live_total_kn }} kN</strong> <span class="src-tag">(Extracted from the STAAD output file)</span>.
 </div>
 
