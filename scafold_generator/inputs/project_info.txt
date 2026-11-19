@@ -2,8 +2,8 @@
 # Lines starting with # are ignored. Format: KEY: value
 
 # Document
-DOCUMENT_NO:         PMS-WA-ARCO-098
-SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-098
+DOCUMENT_NO:         PMS-WA-ARCO-099
+SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-099
 REVISION:            0
 
 # Integrated outputs
@@ -15,9 +15,9 @@ ENGINEERING_DRAWING_FORMAT:  standard
 SHOW_3D_ISOMETRIC_PAGE:      no
 
 # Scaffold location and type
-LOCATION:            Train 3(1105)
-AREA:                D
-SCAFFOLD_TYPE:       
+LOCATION:            Train 4,5,6 (Cryogenic) 
+AREA:                E
+SCAFFOLD_TYPE:       Cantilever
 RISK_LEVEL:          High
 
 # Load Intensity (SWL)
@@ -34,7 +34,7 @@ SHOW_TIE_REACTIONS: no
 # or any project with a plain FIXED support in the STAAD SUPPORTS block. For an ordinary
 # ground-standing scaffold (base plates = "FIXED BUT MX MY MZ") set this to "yes" to show
 # the total vertical reaction summed across those base supports instead.
-SHOW_BASE_FY: yes
+SHOW_BASE_FY: no
 # Manual override for cover page tie forces (kN). Leave blank to use auto-calculated values.
 # TIE_FORCE_FY displays for Hanging scaffolds, or any project with a plain FIXED support in
 # the STAAD SUPPORTS block (a FIXED support always carries a vertical reaction), or when
@@ -44,7 +44,7 @@ TIE_FORCE_FZ:
 TIE_FORCE_FY:
 
 PERMIT_NO:           
-ERMT_NO:             PIC/PMS/26/4169
+ERMT_NO:             PIC/PMS/26/4291
 
 # Optional cover-page callouts, shown once under Brief Description (after the tie display
 # if this project has ties). Leave blank to omit entirely.
@@ -67,25 +67,25 @@ PREPARED_BY_NAME:
 # Job details
 # Use EQUIPMENT_TAG for equipment-tagged jobs, or LINE_NUMBER for line-only jobs (no equipment
 # tag). Fill in only whichever one applies — EQUIPMENT_TAG takes precedence if both are set.
-EQUIPMENT_NAME:     Handrail
+EQUIPMENT_NAME:     
 EQUIPMENT_TAG:      
 LINE_NUMBER:        
 WORK_ORDER:          
-PURPOSE:             personnel work access for welding
-STRUCTURE_ABOVE_GROUND_M: 15
-WIND_CALC_HEIGHT_M: 16.5
+PURPOSE:            personnel access for lighting maintenance
+STRUCTURE_ABOVE_GROUND_M: 49
+WIND_CALC_HEIGHT_M: 52
 DOC_LIFE:            3 Years
 
 # Deflection Check — auto-extracted from .out file SLS combination results.
 # Override only if auto-extraction fails:
-MAX_VERT_DISP_MM:
-MAX_VERT_DISP_LC:
-MAX_HORIZ_DISP_MM:
-MAX_HORIZ_DISP_LC:
+MAX_VERT_DISP_MM: 
+MAX_VERT_DISP_LC: 
+MAX_HORIZ_DISP_MM: 
+MAX_HORIZ_DISP_LC: 
 # Member ID whose length defines the span L for deflection limits (optional).
 # If blank, the member connected to the critical-displacement node is used automatically.
-MAX_VERT_MEMBER:
-MAX_HORIZ_MEMBER:
+MAX_VERT_MEMBER: 
+MAX_HORIZ_MEMBER: 
 
 # Connection Stability Check — auto-computed from the STAAD output (member forces,
 # ULS first with an SLS fallback). Override only if that computation can't be trusted:
@@ -94,7 +94,7 @@ MAX_AXIAL_MEMBER:
 MAX_AXIAL_NODE:
 MAX_AXIAL_LC:
 # Separate override for the SLS fallback value (only used if the ULS check fails).
-MAX_AXIAL_SLS_KN:
-MAX_AXIAL_SLS_MEMBER:
-MAX_AXIAL_SLS_NODE:
-MAX_AXIAL_SLS_LC:
+MAX_AXIAL_SLS_KN: 
+MAX_AXIAL_SLS_MEMBER: 
+MAX_AXIAL_SLS_NODE:   
+MAX_AXIAL_SLS_LC: 

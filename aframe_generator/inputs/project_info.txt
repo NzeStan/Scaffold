@@ -2,8 +2,8 @@
 # Lines starting with # are ignored. Format: KEY: value
 
 # Document
-DOCUMENT_NO:         PMS-WA-ARCO-092
-SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-092
+DOCUMENT_NO:         PMS-WA-ARCO-101
+SCAFFOLD_DRAWING_NO: PMS-WA-ARCO-101
 REVISION:            0
 
 # Integrated outputs
@@ -15,12 +15,12 @@ ENGINEERING_DRAWING_FORMAT:  standard
 SHOW_3D_ISOMETRIC_PAGE:      no
 
 # Scaffold location and type
-LOCATION:            Jetty-1
-AREA:                B
+LOCATION:            GT-8
+AREA:                A
 SCAFFOLD_TYPE:       A-Frame
 RISK_LEVEL:          Medium
 # Cover page CATEGORY label: yes = "Category 1 Engineered Scaffold", no/blank = "Category 2 Engineered Scaffold".
-CATEGORY_1_ASSURANCE_NOTE: no
+CATEGORY_1_ASSURANCE_NOTE: yes
 
 # Page 2 — Reaction on Parent Structure (Ties).
 # Set to "yes" to include the full tie-by-tie reaction table as a separate calc page.
@@ -37,11 +37,11 @@ TIE_FORCE_FZ:
 TIE_FORCE_FY:
 
 PERMIT_NO:
-ERMT_NO:             PIC/PMS/26/
+ERMT_NO:             PIC/PMS/26/4255
 
 # Optional cover-page callouts, shown once under Brief Description (after the tie display
 # if this project has ties). Leave blank to omit entirely.
-NOTE:
+NOTE:   
 WARNING:
 
 # Personnel
@@ -59,9 +59,11 @@ PREPARED_BY_NAME:
 
 
 # Job details
-EQUIPMENT_TAG:       34MOV-772, 34MOV-773
-WORK_ORDER:          4021297, 4021298
-PURPOSE:             replacement and upgrade of obsolete actuator on MOV
+EQUIPMENT_NAME:      lube oil cooler tube bundle   
+EQUIPMENT_TAG:       E-4001-A/B
+LINE_NUMBER:    
+WORK_ORDER:          
+PURPOSE:             removal/reinstatement
 STRUCTURE_ABOVE_GROUND_M: 
 WIND_CALC_HEIGHT_M: 
 DOC_LIFE:            3 Years
@@ -69,7 +71,7 @@ DOC_LIFE:            3 Years
 # Chain hoist load split. If the design hoist load was divided into equal parts in STAAD
 # (one share per hoist point), enter the number of parts and the report multiplies the
 # STAAD hoist and impact loads back up (SWL, design load, impact). Blank = used as-is.
-HOIST_LOAD_SPLIT:    4
+HOIST_LOAD_SPLIT:    2
 
 # Connection Stability Check — auto-computed from the STAAD output (member forces,
 # ULS first with an SLS fallback). Override only if that computation can't be trusted:
@@ -94,10 +96,10 @@ MAX_AXIAL_SLS_LC:
 #                     Length used as L for L/200.
 #                     Leave blank -> L defaults to scaffold depth.
 #
-MAX_VERT_DISP_MM:0.495
-MAX_VERT_MEMBER:157
-MAX_VERT_DISP_LC:16
+MAX_VERT_DISP_MM:
+MAX_VERT_MEMBER:
+MAX_VERT_DISP_LC:
 
-MAX_HORIZ_DISP_MM:0.345
-MAX_HORIZ_MEMBER:59
-MAX_HORIZ_DISP_LC:16
+MAX_HORIZ_DISP_MM:
+MAX_HORIZ_MEMBER:
+MAX_HORIZ_DISP_LC:
